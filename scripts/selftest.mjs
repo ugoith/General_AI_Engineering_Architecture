@@ -466,6 +466,31 @@ async function extraTests() {
     assert(fs.readFileSync(frameworkFile, 'utf8') === originalFrameworkText,
       'init --force 未能重置框架自己的文件（收得过头，用户将无法恢复被改坏的框架文件）');
     assert(reset.written.includes('.ai/constitution.md'), 'init --force 未报告重置了框架文件');
+
+    // 反向校验 2：历史记录（无 origin 字段）的框架文件必须仍能被 upgrade 更新。
+    // 真实故障：origin 机制上线后，老项目里所有 managed 记录都被迁移成 legacy-adopted，
+    // 于是 upgrade 认为"这些都不是框架文件"，框架自己创建的文件再也升不了级。
+    const legacyMetaFile = path.join(legacy, '.ai', 'framework.json');
+    const legacyMetaData = readJsonSafe(legacyMetaFile, {});
+    // 模拟老格式：把记录降级为纯字符串 + 把一个框架文件改成旧内容
+    const downgraded = {};
+    for (const [k, v] of Object.entries(legacyMetaData.managed ?? {})) {
+      downgraded[k] = typeof v === 'string' ? v : v.hash;
+    }
+    legacyMetaData.managed = downgraded;
+    fs.writeFileSync(legacyMetaFile, JSON.stringify(legacyMetaData, null, 2), 'utf8');
+    const staleFile = path.join(legacy, '.ai', 'registry.json');
+    const staleContent = `${fs.readFileSync(staleFile, 'utf8')}\n<!-- 旧版本内容 -->\n`;
+    fs.writeFileSync(staleFile, staleContent, 'utf8');
+    legacyMetaData.managed['.ai/registry.json'] = sha256(staleContent);
+    fs.writeFileSync(legacyMetaFile, JSON.stringify(legacyMetaData, null, 2), 'utf8');
+    const upgradedLegacy = JSON.parse((await run(['upgrade', legacy, '--apply', '--json'])).stdout);
+    assert(upgradedLegacy.updated.includes('.ai/registry.json'),
+      `upgrade 未能更新老格式记录下的框架文件（updated=${JSON.stringify(upgradedLegacy.updated.slice(0, 5))}）`);
+    assert(!fs.readFileSync(staleFile, 'utf8').includes('旧版本内容'), '老格式记录下的框架文件未被真正更新');
+    assert(fs.readFileSync(path.join(legacy, '.gitignore'), 'utf8') === ownGitignore,
+      'upgrade 在处理老格式记录时误伤了项目原有文件');
+
     fs.rmSync(legacy, { recursive: true, force: true });
     pass();
 

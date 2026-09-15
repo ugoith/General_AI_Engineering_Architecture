@@ -9,17 +9,18 @@
 
 /** 静态上下文文件的行数与 token 上限（key 为项目内相对路径）。 */
 export const PACK_LIMITS = {
-  'AGENTS.md': 130,
-  '.ai/constitution.md': 130,
+  'AGENTS.md': 140,
+  '.ai/constitution.md': 140,
   '.ai/index/README.md': 200,
 };
 
 /**
  * 各上下文文件的 token 上限。实测值见 scripts/measure-budget.mjs。
  *
- * - `AGENTS.md`：游戏类 archetype 实测 ~1900–2050（内联四个共享片段 + 引擎专项硬约束），
- *   通用软件类 ~1600。上限取 2100 留出项目自加规则的余量。
- * - `.ai/constitution.md`：游戏类实测 ~1590–1690（含 decision-trigger / scale-gate 片段），上限 1800。
+ * - `AGENTS.md`：游戏类 archetype 实测 ~1900–2050（内联共享片段 + 引擎专项硬约束 +
+ *   引擎必读项与验证命令），通用软件类 ~1600。上限 2100 留出项目自加规则的余量
+ *   （例如把项目已有的规范体系接进来）。行数上限 140 与之匹配。
+ * - `.ai/constitution.md`：游戏类实测 ~1600（含 decision-trigger / scale-gate 片段），上限 1800。
  *
  * 出处：docs/system/04-context-discipline.md 的预算表。
  */

@@ -454,9 +454,18 @@ export function upgradeProject(projectRoot, opts = {}) {
     }
     const currentHash = sha256(fs.readFileSync(abs, 'utf8'));
     if (currentHash === newHash) {
-      // 内容已是框架版本：幂等。但**只有框架创建的文件**才更新托管记录：
-      // 项目原有文件即使内容巧合一致，也不认领（否则下次就会把它当框架文件覆盖）。
-      if (owned) managed[relPosix] = { hash: newHash, origin: 'framework' };
+      // 内容已是框架版本：幂等，登记为托管。
+      if (oldHash !== undefined || owned) managed[relPosix] = { hash: newHash, origin: 'framework' };
+      continue;
+    }
+    // 历史记录（没有 origin 字段）的接管判定：
+    // 有记录 **且当前内容与记录一致** = 框架写过且此后未被改动 → 可以确认为框架文件并接管。
+    // 这与"从未被记录过的文件"有本质区别：后者没有任何证据表明框架创建过它，绝不能接管。
+    // 缺少这一条会导致 upgrade 永远无法更新老项目里自己创建的文件（真实故障）。
+    if (entry && !owned && currentHash === oldHash) {
+      if (!dryRun) fs.writeFileSync(abs, node.text, 'utf8');
+      updated.push(relPosix);
+      managed[relPosix] = { hash: newHash, origin: 'framework' };
       continue;
     }
     // 非框架创建的文件：无论 --force 与否，upgrade 都不接管、不覆盖。

@@ -4,20 +4,87 @@
   "description": "用 Unity 与 C# 开发的单机或小规模联机游戏，含场景、预制体与材质等大体量二进制/YAML 资产。",
   "category": "game",
   "scaleLevel": "M",
-  "scaleHint": { "loc": "5k – 50k", "modules": "5 – 20", "team": "2 – 8 人", "lifespan": "0.5 – 3 年" },
-  "language": ["csharp"],
+  "scaleHint": {
+    "loc": "5k – 50k",
+    "modules": "5 – 20",
+    "team": "2 – 8 人",
+    "lifespan": "0.5 – 3 年"
+  },
+  "language": [
+    "csharp"
+  ],
   "runtime": "unity",
   "variables": [
-    { "key": "srcDir", "prompt": "C# 源码根目录", "default": "Assets/Scripts" },
-    { "key": "unityVersion", "prompt": "Unity 版本", "default": "6000.0 LTS" },
-    { "key": "renderPipeline", "prompt": "渲染管线", "default": "URP", "choices": ["URP", "HDRP", "Built-in"] }
+    {
+      "key": "srcDir",
+      "prompt": "C# 源码根目录",
+      "default": "Assets/Scripts"
+    },
+    {
+      "key": "unityVersion",
+      "prompt": "Unity 版本",
+      "default": "6000.0 LTS"
+    },
+    {
+      "key": "renderPipeline",
+      "prompt": "渲染管线",
+      "default": "URP",
+      "choices": [
+        "URP",
+        "HDRP",
+        "Built-in"
+      ]
+    }
   ],
-  "dirs": ["Assets/Scripts", "Assets/Scripts/Core", "Assets/Scripts/Modules", "Assets/Scripts/UI", "Assets/Editor", "Assets/Scenes", "Assets/Prefabs", "Assets/Settings", "Assets/Tests/EditMode", "Assets/Tests/PlayMode", ".ai/index", ".ai/decisions"],
+  "dirs": [
+    "Assets/Scripts",
+    "Assets/Scripts/Core",
+    "Assets/Scripts/Modules",
+    "Assets/Scripts/UI",
+    "Assets/Editor",
+    "Assets/Scenes",
+    "Assets/Prefabs",
+    "Assets/Settings",
+    "Assets/Tests/EditMode",
+    "Assets/Tests/PlayMode",
+    ".ai/index",
+    ".ai/decisions"
+  ],
   "compile": [
-    { "file": ".ai/constitution.md", "action": "fill", "hint": "填写 Unity 编辑器版本（含 patch）、渲染管线资产路径，以及本机实际可用的构建命令与产物路径" },
-    { "file": ".ai/index/asset-index.md", "action": "fill", "hint": "按索引规范登记首批场景、预制体、材质与 Addressables 组，字段见该文件表头" },
-    { "file": "ProjectSettings/ProjectVersion.txt", "action": "review", "hint": "确认 Unity 版本与宪法声明一致；该文件必须入库，否则团队成员与 CI 的编辑器版本会漂移" }
+    {
+      "file": ".ai/constitution.md",
+      "action": "fill",
+      "hint": "填写 Unity 编辑器版本（含 patch）、渲染管线资产路径，以及本机实际可用的构建命令与产物路径"
+    },
+    {
+      "file": ".ai/index/asset-index.md",
+      "action": "fill",
+      "hint": "按索引规范登记首批场景、预制体、材质与 Addressables 组，字段见该文件表头"
+    },
+    {
+      "file": "ProjectSettings/ProjectVersion.txt",
+      "action": "review",
+      "hint": "确认 Unity 版本与宪法声明一致；该文件必须入库，否则团队成员与 CI 的编辑器版本会漂移"
+    }
   ],
-  "protectedPatterns": ["Assets/**", "ProjectSettings/**", "Packages/**", "docs/architecture/**"],
-  "skills": ["context-indexing", "adr-writing", "game-engine-conventions", "code-review"]
+  "protectedPatterns": [
+    "Assets/**",
+    "ProjectSettings/**",
+    "Packages/**",
+    "docs/architecture/**"
+  ],
+  "skills": [
+    "context-indexing",
+    "adr-writing",
+    "game-engine-conventions",
+    "code-review"
+  ],
+  "alwaysRead": [
+    {
+      "path": ".ai/index/asset-index.md",
+      "level": "L2",
+      "label": "资产索引（场景/预制体/材质；碰资产前必读）",
+      "fallback": "若该文件缺失，说明资产索引未建立：先按 docs/architecture/asset-pipeline.md 建立条目"
+    }
+  ]
 }

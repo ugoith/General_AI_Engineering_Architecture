@@ -20,11 +20,39 @@ import { DEFAULT_TASK_BUDGET } from './limits.mjs';
 
 export const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
-export const ALWAYS_READ = [
+/**
+ * 必读清单：每次任务都要读的固定成本部分。
+ *
+ * 默认三项 + **模板包声明的补充**（`alwaysRead`）。为什么要让 pack 能加：
+ * 游戏项目的资产是二进制、读不了，`.ai/index/asset-index.md` 是理解资产的唯一入口，
+ * 不读它就会去"试着打开 .uasset"——那是注定失败的路径。这类"该类型项目的必读项"
+ * 只有模板包知道，不能写死在 CLI 里。
+ */
+export const BASE_ALWAYS_READ = [
   { path: 'AGENTS.md', level: 'L0', label: 'AI 入口（硬约束 + 路由表）' },
   { path: '.ai/constitution.md', level: 'L1', label: '项目宪法（红线 + 验证命令）' },
   { path: '.ai/index/README.md', level: 'L2', label: '索引体系说明（只在首次或格式变更后需要）' },
 ];
+
+export function composeAlwaysRead(pack = null) {
+  const extra = Array.isArray(pack?.alwaysRead) ? pack.alwaysRead : [];
+  const seen = new Set(BASE_ALWAYS_READ.map((i) => i.path));
+  const merged = [...BASE_ALWAYS_READ];
+  for (const item of extra) {
+    if (!item?.path || seen.has(item.path)) continue;
+    seen.add(item.path);
+    merged.push({
+      path: item.path,
+      level: item.level ?? 'L2',
+      label: item.label ?? item.path,
+      fallback: item.fallback ?? null,
+    });
+  }
+  return merged;
+}
+
+/** 兼容旧引用。 */
+export const ALWAYS_READ = BASE_ALWAYS_READ;
 
 const STOPWORDS = new Set([
   'the', 'a', 'an', 'and', 'or', 'for', 'with', 'that', 'this', 'from', 'into',
@@ -151,7 +179,7 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
 
   const always = [];
   let used = 0;
-  for (const item of ALWAYS_READ) {
+  for (const item of composeAlwaysRead(opts.pack)) {
     const node = files.find((f) => f.path === item.path);
     const abs = path.join(projectRoot, item.path);
     const text = isFile(abs) ? fs.readFileSync(abs, 'utf8') : '';
@@ -164,7 +192,10 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
       exists: Boolean(text),
       hash: node?.hash?.slice(0, 10) ?? null,
       tokens: tokensEstimate,
+      // 该 pack 声明为必读但文件不存在 → 给出可行动提示，而不是静默少读一份
+      missingHint: text ? null : (item.fallback ?? null),
     });
+    if (!text) used -= tokensEstimate; // 不存在的文件不计成本
   }
 
   const selected = [];

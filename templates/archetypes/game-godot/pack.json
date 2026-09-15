@@ -4,20 +4,78 @@
   "description": "用 Godot 4 与 GDScript（或 C#）开发的 2D/3D 游戏，场景与资源为文本格式但结构复杂。",
   "category": "game",
   "scaleLevel": "M",
-  "scaleHint": { "loc": "3k – 40k", "modules": "3 – 15", "team": "1 – 6 人", "lifespan": "0.5 – 3 年" },
-  "language": ["gdscript", "csharp"],
+  "scaleHint": {
+    "loc": "3k – 40k",
+    "modules": "3 – 15",
+    "team": "1 – 6 人",
+    "lifespan": "0.5 – 3 年"
+  },
+  "language": [
+    "gdscript",
+    "csharp"
+  ],
   "runtime": "godot",
   "variables": [
-    { "key": "godotVersion", "prompt": "Godot 版本", "default": "4.3" },
-    { "key": "gdscript", "prompt": "使用 GDScript（false = 使用 C#）", "default": "true" },
-    { "key": "srcDir", "prompt": "脚本根目录", "default": "scripts" }
+    {
+      "key": "godotVersion",
+      "prompt": "Godot 版本",
+      "default": "4.3"
+    },
+    {
+      "key": "gdscript",
+      "prompt": "使用 GDScript（false = 使用 C#）",
+      "default": "true"
+    },
+    {
+      "key": "srcDir",
+      "prompt": "脚本根目录",
+      "default": "scripts"
+    }
   ],
-  "dirs": ["scenes", "scripts", "assets", "addons", "tests", ".ai/index", ".ai/decisions"],
+  "dirs": [
+    "scenes",
+    "scripts",
+    "assets",
+    "addons",
+    "tests",
+    ".ai/index",
+    ".ai/decisions"
+  ],
   "compile": [
-    { "file": ".ai/constitution.md", "action": "fill", "hint": "填写 Godot 版本（含 patch）、导出目标平台与 godot --headless 的实际可执行文件路径" },
-    { "file": ".ai/index/asset-index.md", "action": "fill", "hint": "按索引规范登记首批场景、autoload、资源与导出预设" },
-    { "file": "project.godot", "action": "review", "hint": "确认 config_version、autoload 清单与主场景；改 autoload 必须写 ADR" }
+    {
+      "file": ".ai/constitution.md",
+      "action": "fill",
+      "hint": "填写 Godot 版本（含 patch）、导出目标平台与 godot --headless 的实际可执行文件路径"
+    },
+    {
+      "file": ".ai/index/asset-index.md",
+      "action": "fill",
+      "hint": "按索引规范登记首批场景、autoload、资源与导出预设"
+    },
+    {
+      "file": "project.godot",
+      "action": "review",
+      "hint": "确认 config_version、autoload 清单与主场景；改 autoload 必须写 ADR"
+    }
   ],
-  "protectedPatterns": ["scenes/**", "assets/**", "addons/**", "project.godot"],
-  "skills": ["context-indexing", "adr-writing", "game-engine-conventions", "code-review"]
+  "protectedPatterns": [
+    "scenes/**",
+    "assets/**",
+    "addons/**",
+    "project.godot"
+  ],
+  "skills": [
+    "context-indexing",
+    "adr-writing",
+    "game-engine-conventions",
+    "code-review"
+  ],
+  "alwaysRead": [
+    {
+      "path": ".ai/index/asset-index.md",
+      "level": "L2",
+      "label": "资产索引（场景/资源；碰场景前必读）",
+      "fallback": "若该文件缺失，说明资产索引未建立：先按 docs/architecture/scene-composition.md 建立条目"
+    }
+  ]
 }

@@ -61,6 +61,21 @@
       }
     },
     "protectedPatterns": { "type": "array", "items": { "type": "string" } },
+    "alwaysRead": {
+      "type": "array",
+      "description": "该类型项目的必读项：每次 `ai-arch task` 都会进入任务包的必读清单。用于游戏类的资产索引（.uasset 读不了，资产索引是唯一入口）。路径必须真实存在于渲染结果中。",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "level": { "type": "string", "enum": ["L0", "L1", "L2", "L3"], "default": "L2" },
+          "label": { "type": "string" },
+          "fallback": { "type": "string", "description": "该文件缺失时给 AI 的可行动提示" }
+        }
+      }
+    },
     "skills": { "type": "array", "items": { "type": "string" } }
   }
 }

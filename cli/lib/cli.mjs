@@ -328,8 +328,13 @@ function cmdTask(root, args, flags) {
   const changed = [];
   if (flags.changed) changed.push(...String(flags.changed).split(',').map((s) => s.trim()).filter(Boolean));
 
-  const pack = buildTaskPack(root, prompt, {
+  // 模板包声明的"类型必读项"（如游戏类的资产索引）要进必读清单
+  const projectMeta = loadProjectMeta(root);
+  const pack = projectMeta?.packId ? loadPackById(projectMeta.packId) : null;
+
+  const taskPack = buildTaskPack(root, prompt, {
     index,
+    pack,
     budget: flagNumber(flags, 'budget', DEFAULT_BUDGET),
     maxFiles: flagNumber(flags, 'max-files', 25),
     expandDepth: flagNumber(flags, 'expand', 1),
@@ -339,22 +344,27 @@ function cmdTask(root, args, flags) {
   });
 
   const out = flagString(flags, 'out', null);
-  const file = writeTaskPack(root, pack, { out });
+  const file = writeTaskPack(root, taskPack, { out });
 
   if (flagBool(flags, 'json')) {
-    process.stdout.write(JSON.stringify({ ...pack, file }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ ...taskPack, file }, null, 2) + '\n');
     return 0;
   }
 
   process.stdout.write(`任务包已生成：${normalizeRel(path.relative(root, file))}\n\n`);
-  process.stdout.write(`预估 token：~${pack.estimate.total} / 预算 ${pack.budget}`
-    + `（固定 L0+L1 ~${pack.estimate.mandatory}，按需 ~${pack.estimate.selected}）\n`);
-  process.stdout.write(`读取清单：${pack.readList.length} 个文件`
-    + `（其中需读源码 ${pack.readList.filter((s) => s.decision === 'read-source').length} 个，读摘要 ${pack.readList.filter((s) => s.decision === 'read-digest').length} 个）\n`);
-  if (pack.dropped.length > 0) process.stdout.write(`预算外丢弃：${pack.dropped.length} 个（详见任务包 2.2 节）\n`);
-  if (pack.indexHealth.pendingDigest > 0) {
-    process.stdout.write(`\n注意：还有 ${pack.indexHealth.pendingDigest} 个文件没有摘要，它们会被判定为"必须读源码"，成本偏高。\n`);
+  process.stdout.write(`预估 token：~${taskPack.estimate.total} / 预算 ${taskPack.budget}`
+    + `（固定 L0+L1 ~${taskPack.estimate.mandatory}，按需 ~${taskPack.estimate.selected}）\n`);
+  process.stdout.write(`读取清单：${taskPack.readList.length} 个文件`
+    + `（其中需读源码 ${taskPack.readList.filter((s) => s.decision === 'read-source').length} 个，读摘要 ${taskPack.readList.filter((s) => s.decision === 'read-digest').length} 个）\n`);
+  if (taskPack.dropped.length > 0) process.stdout.write(`预算外丢弃：${taskPack.dropped.length} 个（详见任务包 2.2 节）\n`);
+  if (taskPack.indexHealth.pendingDigest > 0) {
+    process.stdout.write(`\n注意：还有 ${taskPack.indexHealth.pendingDigest} 个文件没有摘要，它们会被判定为"必须读源码"，成本偏高。\n`);
     process.stdout.write('  建议先跑：node .ai/bin/ai-arch.mjs index --stale\n');
+  }
+  const missingAlways = taskPack.always.filter((a) => !a.exists && a.missingHint);
+  if (missingAlways.length > 0) {
+    process.stdout.write('\n必读项缺失（该模板包认为它们是必读，但项目里还没有）：\n');
+    for (const m of missingAlways) process.stdout.write(`  ! ${m.path} —— ${m.missingHint}\n`);
   }
   process.stdout.write('\n接下来：把该文件交给 AI，让它按读取清单执行，不要满仓库搜索。\n');
   return 0;

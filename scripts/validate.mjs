@@ -113,6 +113,20 @@ for (const pack of packs) {
     const count = Object.keys(files).length;
     if (count === 0) fail('pack-render-empty', `${label}：渲染结果为空`);
     else note(`${pack.id}: 渲染 ${count} 个文件`);
+    // alwaysRead 的路径必须真实存在，否则就是一个"指向空文件的必读项"
+    for (const item of pack.alwaysRead ?? []) {
+      if (!item?.path) {
+        fail('pack-always-read-invalid', `${label}：alwaysRead 条目缺少 path`);
+        continue;
+      }
+      if (!Object.prototype.hasOwnProperty.call(files, item.path)) {
+        fail('pack-always-read-missing',
+          `${label}：alwaysRead 指向的 ${item.path} 不在该 pack 的渲染结果里（必读项会指向不存在的文件）`);
+      }
+      if (!item.fallback) {
+        fail('pack-always-read-no-fallback', `${label}：alwaysRead 的 ${item.path} 缺少 fallback 提示`);
+      }
+    }
     for (const [rel, node] of Object.entries(files)) {
       if (rel.includes('{{') || rel.includes('}}')) {
         fail('pack-path-unrendered', `${label}：路径未完全渲染：${rel}`);
