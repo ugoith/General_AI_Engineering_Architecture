@@ -160,7 +160,8 @@ function cmdInit(args, flags) {
     return 0;
   }
 
-  process.stdout.write(`模板包 ${result.pack.id}（${result.pack.title}，规模 ${result.pack.scaleLevel}/${result.pack.scaleName}）\n`);
+  // 注意：scaleName 由 resolveVariables 派生在 vars 上，不在 pack 对象上
+  process.stdout.write(`模板包 ${result.pack.id}（${result.pack.title}，规模 ${result.vars.scaleLevel}/${result.vars.scaleName}）\n`);
   process.stdout.write(`目标目录：${result.dir}${result.dryRun ? '  [dry-run，未写盘]' : ''}\n\n`);
   process.stdout.write(`已生成 ${result.written.length} 项：\n`);
   for (const w of result.written) process.stdout.write(`  + ${w}\n`);

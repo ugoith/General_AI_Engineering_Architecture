@@ -51,11 +51,14 @@ export function doctor(projectRoot) {
   const index = loadIndex(projectRoot);
   if (!index) {
     push('error', 'index-missing', '.ai/index/files.json', '索引不存在', 'node .ai/bin/ai-arch.mjs index');
+  } else if ((index.fileCount ?? 0) === 0) {
+    push('warn', 'index-empty', '.ai/index/files.json',
+      '索引为空（刚 init 且尚未建立基线）', 'node .ai/bin/ai-arch.mjs index');
   } else {
     const pending = (index.files ?? []).filter((f) => f.digest?.status === 'pending' && f.kind === 'text').length;
     const stale = (index.files ?? []).filter((f) => f.digest?.stale).length;
     if (pending === 0 && stale === 0) {
-      push('ok', 'index-health', '.ai/index/files.json', `${index.fileCount ?? 0} 个文件，摘要齐全`);
+      push('ok', 'index-health', '.ai/index/files.json', `${index.fileCount} 个文件，摘要齐全`);
     } else {
       push('warn', 'index-health', '.ai/index/files.json', `待写摘要 ${pending}，摘要过期 ${stale}`, 'node .ai/bin/ai-arch.mjs index --stale');
     }
