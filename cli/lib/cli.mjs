@@ -47,10 +47,16 @@ const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
 
 const PROJECT_COMMANDS = new Set(['index', 'task', 'review', 'scale', 'skill', 'doctor', 'upgrade', 'patterns']);
 
-/** 命令自身的选项名：不参与 kebab→camel 变量归一化。 */
+/**
+ * 命令自身的选项名：只跳过 kebab→camel 归一化，**仍然原样保留**。
+ *
+ * 这个清单必须覆盖 USAGE 里列出的每一个命令选项。漏写不会报错，但会静默改变行为：
+ * 一是选项被错误地归一化（多了个 camelCase 别名），二是用户传的值可能被下游当成变量。
+ * scripts/selftest.mjs 有一条回归测试覆盖这个清单与实际行为的一致性。
+ */
 const COMMAND_FLAGS = [
-  'pack', 'dry-run', 'force', 'refresh', 'json', 'quiet', 'help', 'version',
-  'root', 'name', 'description', 'owner', 'src-dir', 'tests-dir', 'budget',
+  'pack', 'name', 'dry-run', 'force', 'refresh', 'json', 'quiet', 'help', 'version',
+  'root', 'description', 'owner', 'src-dir', 'tests-dir', 'budget',
   'max-files', 'area', 'expand', 'changed', 'slug', 'out', 'limit', 'depth',
   'apply', 'strict', 'stale', 'decisions', 'impact', 'gaps', 'contributors',
   'problem', 'level', 'verbose', 'prompt', 'yes', 'list', 'all', 'deep',
@@ -153,6 +159,7 @@ function cmdInit(args, flags) {
       dir: result.dir,
       written: result.written,
       skipped: result.skipped,
+      refused: result.refused ?? [],
       variables: result.vars,
       missingSkills: result.missingSkills,
       dryRun: result.dryRun,
@@ -166,8 +173,13 @@ function cmdInit(args, flags) {
   process.stdout.write(`已生成 ${result.written.length} 项：\n`);
   for (const w of result.written) process.stdout.write(`  + ${w}\n`);
   if (result.skipped.length > 0) {
-    process.stdout.write(`\n已存在，跳过 ${result.skipped.length} 项（用 --force 覆盖）：\n`);
+    process.stdout.write(`\n已存在，跳过 ${result.skipped.length} 项（这些是框架文件或你改过的文件，用 --force 重置框架文件）：\n`);
     for (const s of result.skipped.slice(0, 20)) process.stdout.write(`  = ${s}\n`);
+  }
+  if ((result.refused ?? []).length > 0) {
+    process.stdout.write(`\n项目原有文件，框架拒绝触碰 ${result.refused.length} 项（--force 也不会写）：\n`);
+    for (const s of result.refused.slice(0, 20)) process.stdout.write(`  ! ${s}\n`);
+    process.stdout.write('  这些文件由你维护。如果确实想用框架版本替换，请先自行删除它再重跑 init。\n');
   }
   if (result.missingSkills.length > 0) {
     process.stdout.write(`\n警告：模板引用了不存在的 skill：${result.missingSkills.join(', ')}\n`);

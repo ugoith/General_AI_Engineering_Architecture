@@ -443,7 +443,49 @@ async function extraTests() {
     assert(fs.readFileSync(path.join(legacy, 'AGENTS.md'), 'utf8') === ownAgents, 'upgrade --force 覆盖了项目原有的 AGENTS.md');
     assert(Array.isArray(forced.notManaged) && forced.notManaged.includes('.gitignore'),
       `upgrade 未把项目原有文件报告为 notManaged（实际：${JSON.stringify(forced.notManaged ?? [])}）`);
+
+    // init --force 同样不得触碰项目原有文件（真实事故：--force 两次覆盖了项目的 .gitignore）
+    const forcedInit = JSON.parse((await run(['init', legacy, '--pack', 'software-app-medium', '--force', '--json'])).stdout);
+    assert(fs.readFileSync(path.join(legacy, '.gitignore'), 'utf8') === ownGitignore,
+      'init --force 覆盖了项目原有的 .gitignore');
+    assert(fs.readFileSync(path.join(legacy, 'AGENTS.md'), 'utf8') === ownAgents,
+      'init --force 覆盖了项目原有的 AGENTS.md');
+    assert(Array.isArray(forcedInit.refused) && forcedInit.refused.includes('.gitignore'),
+      `init --force 未把项目原有文件报告为 refused（实际：${JSON.stringify(forcedInit.refused ?? [])}）`);
+    assert(Array.isArray(forcedInit.refused) && forcedInit.refused.includes('AGENTS.md'),
+      'init --force 未把项目原有的 AGENTS.md 报告为 refused');
+    const metaAfterForce = readJsonSafe(path.join(legacy, '.ai', 'framework.json'), null);
+    assert(!Object.keys(metaAfterForce?.managed ?? {}).includes('.gitignore'),
+      'init --force 之后 .gitignore 又被登记为框架托管（会导致 upgrade 再次覆盖它）');
+
+    // 反向校验：收紧不能收过头 —— 框架自己的文件仍必须能被 --force 重置
+    const frameworkFile = path.join(legacy, '.ai', 'constitution.md');
+    const originalFrameworkText = fs.readFileSync(frameworkFile, 'utf8');
+    fs.writeFileSync(frameworkFile, originalFrameworkText + '\n<!-- 本地乱改 -->\n', 'utf8');
+    const reset = JSON.parse((await run(['init', legacy, '--pack', 'software-app-medium', '--force', '--json'])).stdout);
+    assert(fs.readFileSync(frameworkFile, 'utf8') === originalFrameworkText,
+      'init --force 未能重置框架自己的文件（收得过头，用户将无法恢复被改坏的框架文件）');
+    assert(reset.written.includes('.ai/constitution.md'), 'init --force 未报告重置了框架文件');
     fs.rmSync(legacy, { recursive: true, force: true });
+    pass();
+
+    begin('行为：init 的命令选项不会被当成 pack 变量丢弃');
+    // 回归测试：真实事故——COMMAND_FLAGS 漏了 `name`，导致 `--name AGLS` 被静默忽略，
+    // 项目名退化成目录名派生的 "Aglsv1 5 0"，还生成了带空格的幽灵目录 Source/Aglsv1 5 0/。
+    const named = tmpDir('AGLSV1.5.0');
+    const namedOut = JSON.parse((await run([
+      'init', named, '--pack', 'game-unreal', '--name', 'AGLS', '--ueVersion', '5.7', '--dry-run', '--json',
+    ])).stdout);
+    assert(namedOut.variables.projectName === 'AGLS',
+      `--name 未生效：projectName=${namedOut.variables.projectName}（期望 AGLS）`);
+    assert(namedOut.variables.projectTitle === 'AGLS',
+      `--name 派生的 projectTitle 异常：${namedOut.variables.projectTitle}`);
+    assert(namedOut.variables.ueVersion === '5.7', `--ueVersion 未生效：${namedOut.variables.ueVersion}`);
+    assert(!namedOut.written.some((w) => /\s/.test(w)),
+      `生成路径含空格（幽灵目录）：${namedOut.written.filter((w) => /\s/.test(w)).slice(0, 3).join(', ')}`);
+    assert(namedOut.written.includes('Source/AGLS/README.md'),
+      `项目名未落到源码目录：${namedOut.written.filter((w) => w.startsWith('Source/')).join(', ')}`);
+    fs.rmSync(named, { recursive: true, force: true });
     pass();
 
     begin('行为：未初始化目录给出可行动报错');

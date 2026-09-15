@@ -114,6 +114,52 @@ export function planScaffold(pack, opts = {}) {
   return { vars, files, dirs, errors: [] };
 }
 
+/**
+ * 框架托管记录。
+ *
+ * 结构：`managed[relPath] = { hash, origin }`
+ *  - `hash`   ：上次由框架写入的内容哈希（用于判断"框架文件是否被本地改过"）
+ *  - `origin` ：`'framework'` 表示**这个文件是框架创建的**，可以重置/更新；
+ *               `'legacy-adopted'` 表示历史上"内容恰好一致而被登记"，**框架不认领它**。
+ *
+ * 为什么要区分：真实事故里 `.gitignore` 因一次错误的 force 覆盖被写进 managed，
+ * 之后 `init --force` 就认为"这是框架文件"，把那个错误状态一路还原下去，用户的文件再也回不来。
+ * **只有"框架创建的文件"才允许被重置**，这是不可绕过的安全底线。
+ */
+export function readManaged(meta) {
+  const raw = meta?.managed ?? {};
+  const out = {};
+  for (const [rel, value] of Object.entries(raw)) {
+    if (typeof value === 'string') out[rel] = { hash: value, origin: 'legacy-adopted' };
+    else if (value && typeof value === 'object') {
+      out[rel] = { hash: value.hash, origin: value.origin ?? 'legacy-adopted' };
+    }
+  }
+  return out;
+}
+
+/** 该路径是否是"框架创建的文件"（允许被框架重置）。 */
+export function isFrameworkOwned(entry) {
+  return entry?.origin === 'framework';
+}
+
+/**
+ * 生成项目文件。
+ *
+ * 写入前的安全判定（**关键**）：只有"框架创建的文件"才允许被覆盖或重置。
+ *
+ *  | 情况 | 行为 |
+ *  |---|---|
+ *  | 文件不存在 | 创建，登记 `origin: 'framework'` |
+ *  | 存在且内容与本 pack 渲染结果一致，且**框架创建** | 登记为 framework（幂等） |
+ *  | 存在且内容一致，但不是框架创建 | 只报告，不认领（`origin` 保持） |
+ *  | 框架创建 + 本地未改动 | `--force` 时重置，否则跳过 |
+ *  | 框架创建 + 本地已改动 | `--force` 时才重置 |
+ *  | 从未由框架创建 | **一律不写，报告为 refused；`--force` 也不写** |
+ *
+ * 最后一条是安全底线。早期实现让 `init --force` 覆盖任何现存文件，三次误伤真实项目的
+ * `.gitignore`（项目自有的 UE 忽略规则被模板版顶掉）。
+ */
 export function initProject(dir, opts = {}) {
   const {
     packId, flags = {}, force = false, dryRun = false, now = new Date(), quiet = false,
@@ -132,30 +178,57 @@ export function initProject(dir, opts = {}) {
   if (plan.errors.length > 0) return { ok: false, error: plan.errors.join('\n') };
 
   const target = path.resolve(dir);
+  const metaPath = path.join(target, PACK_FRAMEWORK_META);
+  const prevMeta = readJsonSafe(metaPath, null);
+  const prevManaged = readManaged(prevMeta);
+
   const written = [];
   const skipped = [];
-  const created = [];   // 本次由框架**新建**的文件
-  const managed = {};
+  const refused = [];   // 项目原有文件：框架拒绝触碰
+  const created = [];   // 本次由框架新建的文件
+  const managed = { ...prevManaged };
 
   for (const [rel, node] of Object.entries(plan.files)) {
     const abs = path.join(target, rel);
     const relPosix = normalizeRel(rel);
-    if (isFile(abs) && !force) {
-      skipped.push(relPosix);
+    const newHash = sha256(node.text);
+    const prev = prevManaged[relPosix];
+    const owned = isFrameworkOwned(prev);
+
+    if (!isFile(abs)) {
+      if (!dryRun) {
+        ensureDir(path.dirname(abs));
+        fs.writeFileSync(abs, node.text, 'utf8');
+      }
+      written.push(relPosix);
+      created.push(relPosix);
+      managed[relPosix] = { hash: newHash, origin: 'framework' };
       continue;
     }
-    const existedBefore = isFile(abs);
-    if (!dryRun) {
-      ensureDir(path.dirname(abs));
-      fs.writeFileSync(abs, node.text, 'utf8');
+
+    const currentHash = sha256(fs.readFileSync(abs, 'utf8'));
+    if (currentHash === newHash) {
+      written.push(relPosix);
+      if (!prev) {
+        // 内容恰好与框架版本一致，但框架从未创建它 → 报告但不认领
+        refused.push(relPosix);
+      }
+      // 保持既有 origin 不变（owned 的仍是 framework，legacy 的仍不认领）
+      continue;
     }
-    written.push(relPosix);
-    // 关键：只有"框架新建/覆盖"的文件才登记为托管。
-    // 跳过的文件（项目原有的 .gitignore 等）绝不能登记，否则 upgrade 会认为它是框架文件而覆盖它。
-    if (!existedBefore || force) {
-      created.push(relPosix);
-      managed[relPosix] = sha256(node.text);
+    if (owned) {
+      if (force || currentHash === prev.hash) {
+        // 框架文件：未改动则正常更新；已改动则仅 --force 重置
+        if (!dryRun) fs.writeFileSync(abs, node.text, 'utf8');
+        written.push(relPosix);
+        managed[relPosix] = { hash: newHash, origin: 'framework' };
+      } else {
+        skipped.push(relPosix);
+      }
+      continue;
     }
+    // 不是框架创建的文件 → 绝不写入
+    refused.push(relPosix);
   }
 
   for (const rel of plan.dirs) {
@@ -174,8 +247,8 @@ export function initProject(dir, opts = {}) {
   written.push(...toolCopies.written);
   skipped.push(...toolCopies.skipped);
 
-  // skills 复制
-  const skillCopies = copySkills(target, pack.skills ?? [], { dryRun, force });
+  // skills 复制（同样只碰框架自己的文件：已存在且内容不同的 skill 文件不覆盖）
+  const skillCopies = copySkills(target, pack.skills ?? [], { dryRun, force: false });
   written.push(...skillCopies.written);
   skipped.push(...skillCopies.skipped);
   const missingSkills = (pack.skills ?? []).filter((id) => !skillExists(id));
@@ -188,26 +261,19 @@ export function initProject(dir, opts = {}) {
   const templateCopies = copyTemplateSnapshot(target, { dryRun });
   written.push(...templateCopies.written);
 
-  const metaPath = path.join(target, PACK_FRAMEWORK_META);
   const meta = {
     schemaVersion: 1,
     frameworkVersion: frameworkVersion(),
     packId: pack.id,
     scaleLevel: pack.scaleLevel,
     variables: plan.vars,
-    generatedAt: now.toISOString(),
+    generatedAt: prevMeta?.generatedAt ?? now.toISOString(),
     managed,
     skills: pack.skills ?? [],
     protectedPatterns: pack.protectedPatterns ?? [],
+    refusedNotManaged: refused.sort(),
   };
-  if (!dryRun) {
-    if (isFile(metaPath)) {
-      const prev = readJsonSafe(metaPath, {});
-      meta.generatedAt = prev.generatedAt ?? meta.generatedAt;
-      meta.managed = { ...(prev.managed ?? {}), ...managed };
-    }
-    writeJson(metaPath, meta);
-  }
+  if (!dryRun) writeJson(metaPath, meta);
 
   return {
     ok: true,
@@ -216,6 +282,8 @@ export function initProject(dir, opts = {}) {
     dir: target,
     written: written.sort(),
     skipped: skipped.sort(),
+    created: created.sort(),
+    refused: refused.sort(),
     managedCount: Object.keys(managed).length,
     missingSkills,
     dryRun,
@@ -362,14 +430,16 @@ export function upgradeProject(projectRoot, opts = {}) {
   const protectedFiles = [];
   const notManaged = [];
 
-  const managed = meta.managed ?? {};
+  const managed = readManaged(meta);
   const affected = new Set();
 
   for (const [rel, node] of Object.entries(plan.files)) {
     const abs = path.join(projectRoot, rel);
     const relPosix = normalizeRel(rel);
     const newHash = sha256(node.text);
-    const oldHash = managed[relPosix];
+    const entry = managed[relPosix];
+    const oldHash = entry?.hash;
+    const owned = isFrameworkOwned(entry);
     affected.add(relPosix);
 
     if (matchesAny(relPosix, protectedPatterns)) {
@@ -377,30 +447,30 @@ export function upgradeProject(projectRoot, opts = {}) {
       continue;
     }
     if (!isFile(abs)) {
-      // 文件已不在项目里：只有"框架曾经创建过"的才可能是被用户删除，才报告 removed。
-      // 从未托管过的文件不存在 → 什么都没发生（绝不能据此创建！）
-      if (oldHash !== undefined) removed.push(relPosix);
+      // 文件已不在项目里：只有"框架创建过"的才可能是被用户删除，才报告 removed。
+      // 从未托管的文件不存在 → 什么都没发生（绝不能据此创建！）
+      if (owned) removed.push(relPosix);
       continue;
     }
     const currentHash = sha256(fs.readFileSync(abs, 'utf8'));
     if (currentHash === newHash) {
-      // 内容与框架版本一致：直接接管为托管（此前可能是 init 跳过的文件，恰好内容相同）
-      if (oldHash === undefined) managed[relPosix] = newHash;
+      // 内容已是框架版本：幂等。但**只有框架创建的文件**才更新托管记录：
+      // 项目原有文件即使内容巧合一致，也不认领（否则下次就会把它当框架文件覆盖）。
+      if (owned) managed[relPosix] = { hash: newHash, origin: 'framework' };
       continue;
     }
-    // 从未托管的现存文件 = 项目原有文件。无论 --force 与否，upgrade 都不允许接管或覆盖它：
-    // 覆盖它等于销毁用户内容（真实案例：UE 项目的 .gitignore 被模板版覆盖）。
-    // 想接管请显式删除该文件后重跑 init，或先用 --dry-run 确认影响面。
-    if (oldHash === undefined) {
+    // 非框架创建的文件：无论 --force 与否，upgrade 都不接管、不覆盖。
+    // 覆盖它等于销毁用户内容（真实案例：UE 项目的 .gitignore 被模板版覆盖三次）。
+    if (!owned) {
       notManaged.push(relPosix);
       continue;
     }
     if (currentHash !== oldHash) {
-      // 框架托管但被本地改过：默认保留；--force 才覆盖（这是显式的破坏性要求）
+      // 框架创建但被本地改过：默认保留；--force 才覆盖（这是显式的破坏性要求）
       if (force) {
         if (!dryRun) fs.writeFileSync(abs, node.text, 'utf8');
         updated.push(relPosix);
-        managed[relPosix] = newHash;
+        managed[relPosix] = { hash: newHash, origin: 'framework' };
       } else {
         changedLocally.push(relPosix);
       }
@@ -408,7 +478,7 @@ export function upgradeProject(projectRoot, opts = {}) {
     }
     if (!dryRun) fs.writeFileSync(abs, node.text, 'utf8');
     updated.push(relPosix);
-    managed[relPosix] = newHash;
+    managed[relPosix] = { hash: newHash, origin: 'framework' };
   }
 
   for (const rel of Object.keys(managed)) {

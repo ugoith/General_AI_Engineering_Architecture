@@ -271,11 +271,41 @@ export function assessScale(index, extra = {}) {
   };
 }
 
-function countModules(files, srcDir) {
+/**
+ * 统计"模块数"，按技术栈识别（见 docs/system/02-scales.md）。
+ *
+ * 为什么不能简单地数 `src/` 的顶层子目录：UE 的模块由 `.Build.cs` 定义，
+ * `Source/<Module>/Public|Private` 里的 Public/Private 是**分层，不是模块**。
+ * 早期实现按目录数，把某 UE 项目（8 个 `.Build.cs`）算成 1 个模块，进而算错规模等级。
+ *
+ * 关键细节：模块标记文件要在**全项目**范围内找，不能只看主源码根——
+ * UE 项目的多数模块位于 `Plugins/<Plugin>/Source/<Module>/*.Build.cs`（实测 8 个里有 7 个在插件里）。
+ *
+ * 识别顺序：UE(`*.Build.cs`) → Unity(`*.asmdef`) → Godot(`project.godot`，按顶层目录算) → 回落目录数。
+ */
+export function countModules(files, srcDir) {
+  const ueModules = files.filter((f) => /\.Build\.cs$/i.test(f.path)).length;
+  if (ueModules > 0) return ueModules;
+
+  const asmdefs = files.filter((f) => /\.asmdef$/i.test(f.path)).length;
+  if (asmdefs > 0) return asmdefs;
+
   const prefix = normalizeRel(srcDir).replace(/\/$/, '');
+  const inSrc = files.filter((f) => f.path === prefix || f.path.startsWith(prefix + '/'));
+
+  if (files.some((f) => /(^|\/)project\.godot$/i.test(f.path))) {
+    const tops = countTopLevelDirs(inSrc, prefix);
+    return tops > 0 ? tops : 1;
+  }
+
+  const byTopLevel = countTopLevelDirs(inSrc, prefix);
+  if (byTopLevel > 0) return byTopLevel;
+  return inSrc.length > 0 ? 1 : 0;
+}
+
+function countTopLevelDirs(entries, prefix) {
   const dirs = new Set();
-  for (const f of files) {
-    if (!f.path.startsWith(prefix + '/')) continue;
+  for (const f of entries) {
     const rest = f.path.slice(prefix.length + 1).split('/');
     if (rest.length > 1) dirs.add(rest[0]);
   }
@@ -318,13 +348,14 @@ const AI_INTERNAL_PREFIXES = [
 ];
 
 /**
- * 是否为"框架只读资产"：不进索引、不写摘要、不进任务读取清单。
- * 与 AI_INTERNAL 的区别：这些连索引条目都不建（索引只描述项目内容）。
+ * 是否为"框架自身"的路径：不进索引、不写摘要、不进任务读取清单。
+ *
+ * 整个 `.ai/` 都算——它是**框架与 AI 的工作区**，不是项目内容：
+ * 索引描述项目，不该把框架自己的规范快照、CLI 副本、任务包算进"项目行数"。
+ * （实测：某 UE 项目的 .ai/ 文档占了 1336 行，被算进规模评估会误导等级判定。）
  */
 export function isFrameworkSnapshot(relPath) {
-  return relPath.startsWith('.ai/bin/')
-    || relPath.startsWith('.ai/lib/')
-    || relPath.startsWith('.ai/framework/');
+  return relPath.startsWith('.ai/');
 }
 /** `.ai/` 下值得写摘要的核心上下文。 */
 const AI_CORE_PATHS = new Set([
