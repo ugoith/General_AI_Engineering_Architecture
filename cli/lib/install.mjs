@@ -184,15 +184,18 @@ export function writeAgentAdapters(root, { agents = 'auto', dryRun = false, aiDi
   return { written, skipped, refused, detected: detectAgents(root) };
 }
 
-/** 项目内可用的接入命令（写进提示词，保证 agent 拿到的是当前版本的真实命令）。 */
-export function installCommandFor(frameworkDir, projectRoot) {
-  const rel = path.relative(projectRoot, frameworkDir);
-  const isInside = rel && !rel.startsWith('..') && !path.isAbsolute(rel);
-  const fw = isInside ? normalizeRel(rel) : frameworkDir;
-  const quoted = /\s/.test(fw) ? `"${fw}"` : fw;
-  const sep = path.sep === '\\' ? '\\' : '/';
-  return `node ${quoted}${sep}cli${sep}ai-arch.mjs install --root .`;
-}
+/**
+ * 提示词里用的框架获取方式。
+ *
+ * 关键：提示词是**要粘给别人/别的机器**的，因此不能写死本机绝对路径——
+ * 打包版尤其如此（框架根在 `~/.ai-arch/bundled/<hash>/` 这种缓存目录里，对用户毫无意义，
+ * 换台机器直接失效）。所以提示词以"先克隆"为主路径，本机路径只作为附注。
+ */
+export const FRAMEWORK_REPO = 'https://github.com/ugoith/General_AI_Engineering_Architecture.git';
+export const CLONE_DIR = '.ai-arch-framework';
+
+/** 克隆目录里的 CLI 入口（仓库模式下可用）。 */
+const ENTRY = 'node .ai-arch-framework/cli/ai-arch.mjs';
 
 /**
  * 把启动器装进用户 bin 目录，让 `ai-arch` 像 `git` 一样在任何目录可用。
@@ -328,20 +331,18 @@ export function buildQuickstartPrompt(opts) {
   lines.push('');
   lines.push('## 你要做的事');
   lines.push('');
-  lines.push('### 第 1 步：跑安装命令（一条命令，不要手工创建目录）');
+  lines.push('### 第 1 步：取框架并安装（不要手工创建目录）');
   lines.push('');
   lines.push('```bash');
-  lines.push(installCommandFor(frameworkDir, projectRoot));
+  lines.push(`git clone ${FRAMEWORK_REPO} ${CLONE_DIR}`);
+  lines.push(`${ENTRY} install --root .`);
   lines.push('```');
   lines.push('');
-  lines.push('如果框架不在本机，先取一份（二选一）：');
+  lines.push(`如果框架**已经在本机**（不要重复克隆），把上面第一条命令换成使用该目录，例如：`);
   lines.push('');
   lines.push('```bash');
-  lines.push('# 方式 A：已有本地副本');
-  lines.push(`#   框架目录：${frameworkDir}`);
-  lines.push('# 方式 B：从 GitHub 取');
-  lines.push('git clone https://github.com/ugoith/General_AI_Engineering_Architecture.git .ai-arch-framework');
-  lines.push('node .ai-arch-framework/cli/ai-arch.mjs install --root .');
+  lines.push(`# 本机已有一份框架时（路径由用户提供；打包版会把框架解包到用户缓存目录，无需克隆）`);
+  lines.push('node <框架目录>/cli/ai-arch.mjs install --root .');
   lines.push('```');
   lines.push('');
   lines.push('### 第 2 步：报告你识别到的项目类型，等我确认');
@@ -361,7 +362,7 @@ export function buildQuickstartPrompt(opts) {
   lines.push('如果识别正确，命令是：');
   lines.push('');
   lines.push('```bash');
-  lines.push(`node <框架目录>/cli/ai-arch.mjs install --root . --pack ${detection.packId ?? '<pack-id>'} --name ${name}${engine ? ` --${engine.key} "${engine.value}"` : ''}`);
+  lines.push(`${ENTRY} install --root . --pack ${detection.packId ?? '<pack-id>'} --name ${name}${engine ? ` --${engine.key} "${engine.value}"` : ''}`);
   lines.push('```');
   lines.push('');
   lines.push('### 第 3 步：安装后必须做的三件事（不要跳过）');
