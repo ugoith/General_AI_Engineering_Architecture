@@ -30,7 +30,10 @@
 
 | 命令 | 作用 | 主要产出 |
 |---|---|---|
-| `init [dir] --pack <id>` | 用模板包初始化项目 | 项目骨架 + `.ai/` 上下文体系 + 工具链副本 |
+| `quickstart [--root <目录>]` | **生成可粘贴给 AI 的接入提示词**（自动识别项目类型、项目名、引擎版本） | stdout / `--json` |
+| `install [--root <目录>]` | **一条命令接入**：识别类型 + 生成骨架 + 写 agent 指针 + 建基线索引 | 同 `init`，另加 `--json` 里的检测证据 |
+| `install-shim [--bin <目录>] [--from <文件>]` | 把 `ai-arch` 装成命令（像 git 一样随处可用） | `<bin>/ai-arch(.cmd)` + `<bin>/ai-arch.mjs` |
+| `init [dir] --pack <id>` | 用模板包初始化项目（已知类型时用） | 项目骨架 + `.ai/` 上下文体系 + 工具链副本 |
 | `index` | 构建/更新文件索引 | `.ai/index/files.json` |
 | `index --stale` | 列出待写摘要的文件，并输出 AI 提示词载荷 | stdout / `--json` |
 | `index --apply <file>` | 把 AI 产出的摘要写回索引（校验 hash） | `.ai/index/files.json` |
@@ -45,6 +48,48 @@
 | `doctor` | 项目健康检查 | stdout / 退出码 |
 | `packs` | 列出可用模板包 | stdout / `--json` |
 | `upgrade` | 同步框架文件到当前版本 | 三态报告；`--apply` 生效 |
+
+## 项目类型自动识别（`install` / `quickstart`）
+
+依据"该类型必然存在的标记文件"，权重最高的信号决定类型；**多个引擎标记接近时返回"无法确定"并要求 `--pack`，不猜**。
+
+| 信号 | 判定为 |
+|---|---|
+| `*.uproject` / `*.Build.cs` / `.uplugin` / `Content/` / `Plugins/` | `game-unreal` |
+| `ProjectSettings/ProjectVersion.txt` / `*.asmdef` / `*.unity` / `Assets/` | `game-unity` |
+| `project.godot` / `*.tscn` / `*.tres` / `scenes/` | `game-godot` |
+| `package.json` 含 phaser/pixi/three/babylon 等引擎依赖 | `game-web` |
+| `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml` / `*.sln` | `software-app-medium` |
+
+注意：`package.json` 的解析必须容忍 BOM（Windows 工具常写出带 BOM 的文件），否则"含游戏引擎依赖"这一信号会被静默丢弃。实现见 `cli/lib/detect.mjs`。
+
+## agent 适配：核心在 `.ai/`，agent 目录只放指针
+
+`install` 会在**项目里已存在**的 agent 目录下写一行指针（内容只有"去读 `AGENTS.md` 与 `.ai/`"）：
+
+| agent | 写入位置 | 探测依据 |
+|---|---|---|
+| Claude Code | `.claude/CLAUDE.md` | `.claude/` 存在 |
+| Cursor | `.cursor/rules/ai-arch.mdc` | `.cursor/` 存在 |
+| Codex CLI | `.codex/AGENTS.md` | `.codex/` 存在 |
+| GitHub Copilot | `.github/copilot-instructions.md` | `.github/` 存在 |
+| WorkBuddy | `.workbuddy/AGENTS.md` | `.workbuddy/` 存在 |
+| Continue | `.continue/rules/ai-arch.md` | `.continue/` 存在 |
+
+规则：① 探测依据是 **agent 根目录**（不是嵌套子目录，否则判定永远为假——真实缺陷）；② 已存在且非框架生成的同名文件**绝不覆盖**，只报告；③ 生成的文件带统一标记，**可随时删除**；④ 不用 `--agent <id>` 时只处理已存在的目录，**不凭空造目录**；⑤ 刻意不碰 `.claude/settings.json` 这类用户配置。
+
+**为什么不把核心放进这些目录**：会破坏工具无关性（换工具要搬家）、破坏 `AGENTS.md` 的仓库根发现约定、且这些目录常含"每机私有"内容（如被全局 gitignore 的 settings.local.json），团队无法共享。完整理由见 `docs/04-design-notes.md`。
+
+## 单文件分发（`scripts/pack.mjs`）
+
+```bash
+node scripts/pack.mjs        # → dist/ai-arch.mjs + dist/ai-arch.cmd + dist/ai-arch
+```
+
+- `dist/ai-arch.mjs` 是**自包含单文件**：内联 `cli/` + `templates/` + `skills/` + `schema/` + `docs/system/`，约 600KB，运行时解包到 `~/.ai-arch/bundled/<版本>-<内容哈希>/`。
+- **缓存键是内容哈希而不是版本号**：早期用版本号做键，导致"同一版本内改了行为"时继续用旧解包，新命令静默消失（真实故障）。
+- 环境变量：`AI_ARCH_HOME`（改缓存位置）、`AI_ARCH_BUNDLE_ROOT`（打包版自用）、`AI_ARCH_SELF`（打包版指向自身，供 `install-shim` 复制）。
+- 真 `.exe`（单文件可执行）需要 Node 的 SEA + postject，或 Node 26+ 的内建支持；本框架不引入该构建依赖，用"单 `.mjs` + 启动器"替代。
 
 ## init
 

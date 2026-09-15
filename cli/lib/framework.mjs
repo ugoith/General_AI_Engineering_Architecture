@@ -18,6 +18,9 @@ export function cliRoot() {
 
 /** 框架资源根：包含 templates/ 与 schema/ 的目录。 */
 export function frameworkRoot() {
+  // 单文件分发版（scripts/pack.mjs 的产物）会把内联资源解包到缓存目录，
+  // 并通过该环境变量告诉 CLI"框架根在哪"。
+  if (process.env.AI_ARCH_BUNDLE_ROOT) return process.env.AI_ARCH_BUNDLE_ROOT;
   return path.resolve(cliRoot(), '..');
 }
 

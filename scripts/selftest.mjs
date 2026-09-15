@@ -513,7 +513,62 @@ async function extraTests() {
     fs.rmSync(named, { recursive: true, force: true });
     pass();
 
-    begin('行为：未初始化目录给出可行动报错');
+    begin('行为：quickstart 生成可粘贴的接入提示词');    const qsRoot = tmpDir('qs');
+    fs.writeFileSync(path.join(qsRoot, 'project.godot'), '[application]\n', 'utf8');
+    fs.mkdirSync(path.join(qsRoot, 'scenes'), { recursive: true });
+    fs.writeFileSync(path.join(qsRoot, 'scenes', 'main.tscn'), '[gd_scene]\n', 'utf8');
+    const qs = await run(['quickstart', '--root', qsRoot]);
+    assert(qs.stdout.includes('install'), '提示词里没有安装命令');
+    assert(qs.stdout.includes('ai-arch.mjs install --root .'), '提示词里的安装命令不是可直接执行的形式');
+    assert(qs.stdout.includes('game-godot'), '提示词未包含识别出的项目类型');
+    assert(qs.stdout.includes('验收标准'), '提示词没有验收标准');
+    assert(qs.stdout.includes('不要覆盖项目原有文件'), '提示词没有强调"不覆盖项目原有文件"这条硬约束');
+    assert(qs.stdout.includes('.ai/'), '提示词没有说明核心放在 .ai/');
+    const qsJson = JSON.parse((await run(['quickstart', '--root', qsRoot, '--json'])).stdout);
+    assert(typeof qsJson.prompt === 'string' && qsJson.prompt.length > 500, 'quickstart --json 输出异常');
+    fs.rmSync(qsRoot, { recursive: true, force: true });
+    pass();
+
+    begin('行为：install 一条命令接入（自动识别 + agent 指针 + 索引）');
+    const instRoot = tmpDir('install');
+    fs.writeFileSync(path.join(instRoot, 'Demo.uproject'), JSON.stringify({ FileVersion: 3, EngineAssociation: '5.7' }), 'utf8');
+    fs.mkdirSync(path.join(instRoot, 'Content', 'Maps'), { recursive: true });
+    fs.mkdirSync(path.join(instRoot, 'Source', 'Demo'), { recursive: true });
+    fs.writeFileSync(path.join(instRoot, 'Source', 'Demo', 'Demo.Build.cs'), '// build\n', 'utf8');
+    // 项目原有的文件：必须原样保留
+    const ownIgnore = '# 项目原有\nBinaries/*\n';
+    const ownClaude = '# 项目自己的 CLAUDE.md\n\n不要覆盖我\n';
+    fs.writeFileSync(path.join(instRoot, '.gitignore'), ownIgnore, 'utf8');
+    fs.mkdirSync(path.join(instRoot, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(instRoot, '.claude', 'CLAUDE.md'), ownClaude, 'utf8');
+
+    const inst = JSON.parse((await run(['install', instRoot, '--json'])).stdout);
+    assert(inst.detection.packId === 'game-unreal', `类型识别错误：${inst.detection.packId}`);
+    assert(inst.detection.confidence === 'high', `置信度异常：${inst.detection.confidence}`);
+    assert(inst.variables.name === 'Demo', `项目名未从 .uproject 推断：${inst.variables.name}`);
+    assert(inst.variables.ueVersion === '5.7', `引擎版本未从 .uproject 推断：${inst.variables.ueVersion}`);
+    assert(inst.written.includes('AGENTS.md') && inst.written.includes('.ai/constitution.md'), 'install 未生成核心文件');
+    assert(inst.index && inst.index.fileCount > 0, 'install 未建立基线索引');
+    assertFile(instRoot, '.ai/index/files.json');
+    // 项目原有文件必须完好
+    assert(fs.readFileSync(path.join(instRoot, '.gitignore'), 'utf8') === ownIgnore, 'install 覆盖了项目原有的 .gitignore');
+    assert(fs.readFileSync(path.join(instRoot, '.claude', 'CLAUDE.md'), 'utf8') === ownClaude, 'install 覆盖了项目原有的 .claude/CLAUDE.md');
+    assert(inst.refused.includes('.gitignore'), 'install 未把项目原有的 .gitignore 报告为 refused');
+    assert(inst.agentAdapters.refused.includes('.claude/CLAUDE.md'), '未把项目原有的 CLAUDE.md 报告为 refused');
+    // 索引不应包含被忽略的生成物
+    assert(!inst.written.some((w) => w.startsWith('Binaries/')), 'install 生成了被忽略目录下的文件');
+    fs.rmSync(instRoot, { recursive: true, force: true });
+    pass();
+
+    begin('行为：无法识别类型时不猜（要求 --pack）');
+    const vague = tmpDir('vague');
+    fs.writeFileSync(path.join(vague, 'notes.txt'), 'nothing recognizable\n', 'utf8');
+    const vagueRes = await run(['install', vague], { expectCode: null, quiet: true });
+    assert(vagueRes.code === 1, `无法识别类型时应返回 1，实际 ${vagueRes.code}`);
+    assert(vagueRes.stderr.includes('无法确定项目类型'), '未给出"无法确定类型"的提示');
+    assert(vagueRes.stderr.includes('--pack'), '未提示用 --pack 指定');
+    fs.rmSync(vague, { recursive: true, force: true });
+    pass();
     const empty = tmpDir('empty');
     const res = await run(['index', empty], { expectCode: null, quiet: true });
     fs.rmSync(empty, { recursive: true, force: true });

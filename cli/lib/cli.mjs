@@ -23,11 +23,16 @@ import { doctor, renderDoctor } from './doctor.mjs';
 import { impactOf } from './neighbors.mjs';
 import { PATTERNS, MATRIX_RULES, antiPatterns } from './patterns.mjs';
 import { PACK_LIMITS, DEFAULT_TASK_BUDGET as DEFAULT_BUDGET } from './limits.mjs';
+import { detectPack, suggestProjectName, suggestEngineVersion } from './detect.mjs';
+import { writeAgentAdapters, buildQuickstartPrompt, detectAgents, installShim } from './install.mjs';
 
 const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
 
 用法：
   ai-arch init [dir] --pack <id> [选项]     用模板包初始化一个项目
+  ai-arch install [--pack <id>] [选项]      一条命令接入：自动识别类型 + 生成 agent 指针 + 建索引
+  ai-arch install-shim [--bin <目录>] [--from <文件>]  把 ai-arch 装成命令（像 git 一样随处可用）
+  ai-arch quickstart [--agent <id>]         打印可粘贴给 agent 的接入提示词
   ai-arch index [--stale|--apply <file>|--json]  构建/查看/回填文件索引
   ai-arch task "<任务描述>" [--area <目录>]  生成任务上下文包（该读什么、值多少 token）
   ai-arch review [--drift|--decisions|--impact <文件>]  规范漂移与影响面检查
@@ -60,6 +65,7 @@ const COMMAND_FLAGS = [
   'max-files', 'area', 'expand', 'changed', 'slug', 'out', 'limit', 'depth',
   'apply', 'strict', 'stale', 'decisions', 'impact', 'gaps', 'contributors',
   'problem', 'level', 'verbose', 'prompt', 'yes', 'list', 'all', 'deep',
+  'agent', 'no-index', 'format', 'framework', 'bin', 'from',
 ];
 
 export async function main(argv) {
@@ -78,6 +84,9 @@ export async function main(argv) {
   try {
     if (command === 'packs') return cmdPacks(flags);
     if (command === 'init') return cmdInit(args, flags);
+    if (command === 'install') return cmdInstall(args, flags);
+    if (command === 'install-shim') return cmdInstallShim(flags);
+    if (command === 'quickstart') return cmdQuickstart(args, flags);
     if (command === 'patterns') return cmdPatterns(flags);
     if (PROJECT_COMMANDS.has(command)) return cmdProject(command, args, flags);
     process.stderr.write(`未知命令：${command}\n\n${USAGE}`);
@@ -194,6 +203,196 @@ function cmdInit(args, flags) {
     process.stdout.write('\n本项目还需要人工确认：\n');
     for (const c of result.pack.compile) process.stdout.write(`  - ${c.file}：${c.hint ?? c.action}\n`);
   }
+  return 0;
+}
+
+/* ------------------------------------------------------------ install */
+
+/**
+ * 一条命令接入：识别项目类型 → 生成骨架 → 写 agent 指针 → 建索引 → 给出下一步。
+ *
+ * 与 `init` 的区别：`init` 要求你已知 pack id；`install` 自己判断（并报告依据与置信度），
+ * 且额外负责 agent 适配与基线索引——这是"别人拿到框架后接管一个项目"的主路径。
+ */
+function cmdInstall(args, flags) {
+  const targetDir = path.resolve(args[0] ?? flagString(flags, 'root', process.cwd()));
+  const isJson = flagBool(flags, 'json');
+  const dryRun = flagBool(flags, 'dry-run');
+  const explicitPack = flagString(flags, 'pack', null);
+
+  if (!isDir(targetDir)) {
+    process.stderr.write(`[ai-arch] 目录不存在：${targetDir}\n`);
+    return 1;
+  }
+
+  // 1) 识别类型
+  const { files } = walk(targetDir, {});
+  const fileList = files.map((f) => normalizeRel(f));
+  const detection = explicitPack
+    ? { packId: explicitPack, confidence: 'explicit', evidence: ['由 --pack 指定'], candidates: [] }
+    : detectPack(targetDir, fileList);
+
+  if (!detection.packId) {
+    process.stderr.write('[ai-arch] 无法确定项目类型，请用 --pack 指定。\n\n');
+    if (detection.conflict) {
+      process.stderr.write(`      检测到多个引擎标记冲突：${detection.conflict.join(' / ')}\n`);
+    }
+    if (detection.candidates.length > 0) {
+      process.stderr.write('      候选（按得分）：\n');
+      for (const c of detection.candidates.slice(0, 5)) {
+        process.stderr.write(`        ${c.packId}（${c.score} 分）\n`);
+      }
+    }
+    process.stderr.write(`      依据：${detection.evidence.join('；') || '（无匹配标记）'}\n`);
+    process.stderr.write('\n      全部模板包见：ai-arch packs\n');
+    return 1;
+  }
+
+  // 2) 变量：名字与引擎版本尽量自动取
+  const name = flagString(flags, 'name', null) ?? suggestProjectName(targetDir, fileList);
+  const engine = suggestEngineVersion(targetDir, fileList);
+  const initFlags = { ...normalizeVarFlags(flags, { reserved: COMMAND_FLAGS }), name };
+  if (engine && initFlags[engine.key] === undefined) initFlags[engine.key] = engine.value;
+
+  // 3) 生成骨架
+  const result = initProject(targetDir, {
+    packId: detection.packId,
+    flags: initFlags,
+    force: flagBool(flags, 'force'),
+    dryRun,
+  });
+  if (!result.ok) {
+    process.stderr.write(`[ai-arch] ${result.error}\n`);
+    return 1;
+  }
+
+  // 4) 写 agent 适配指针（只写已存在的 agent 目录 / 或显式指定）
+  const adapter = writeAgentAdapters(targetDir, {
+    agents: flagString(flags, 'agent', 'auto'),
+    dryRun,
+    aiDir: result.vars.aiDir ?? '.ai',
+  });
+
+  // 5) 基线索引
+  let indexSummary = null;
+  if (!dryRun && !flagBool(flags, 'no-index')) {
+    const index = scanProject(targetDir, { previous: loadIndex(targetDir) });
+    saveIndex(targetDir, index);
+    indexSummary = { fileCount: index.fileCount, totalLoc: index.summary.totalLoc, excluded: index.excluded?.count ?? 0, pending: index.summary.pendingDigest };
+  }
+
+  if (isJson) {
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      detection: {
+        packId: detection.packId,
+        confidence: detection.confidence,
+        evidence: detection.evidence,
+        candidates: detection.candidates,
+      },
+      variables: { name, ...(engine ? { [engine.key]: engine.value } : {}) },
+      written: result.written,
+      skipped: result.skipped,
+      refused: result.refused ?? [],
+      agentAdapters: adapter,
+      index: indexSummary,
+      dryRun,
+    }, null, 2) + '\n');
+    return 0;
+  }
+
+  process.stdout.write(`接入完成${dryRun ? '（dry-run，未写盘）' : ''}\n\n`);
+  process.stdout.write(`  识别类型：${detection.packId}（置信度 ${detection.confidence}）\n`);
+  for (const e of detection.evidence.slice(0, 5)) process.stdout.write(`      · ${e}\n`);
+  process.stdout.write(`  项目名  ：${name}${engine ? `　引擎版本：${engine.value}` : ''}\n`);
+  process.stdout.write(`  目标目录：${targetDir}\n\n`);
+
+  process.stdout.write(`  生成 ${result.written.length} 项；跳过 ${result.skipped.length} 项\n`);
+  if ((result.refused ?? []).length > 0) {
+    process.stdout.write(`  项目原有文件，框架拒绝触碰 ${result.refused.length} 项（--force 也不写）：\n`);
+    for (const r of result.refused.slice(0, 8)) process.stdout.write(`      ! ${r}\n`);
+  }
+  if (adapter.written.length > 0) {
+    process.stdout.write(`  agent 指针 ${adapter.written.length} 个：\n`);
+    for (const w of adapter.written) process.stdout.write(`      + ${w}\n`);
+  }
+  if (adapter.refused.length > 0) {
+    process.stdout.write(`  agent 目录下已有同名文件，未覆盖：${adapter.refused.join('、')}\n`);
+  }
+  if (indexSummary) {
+    process.stdout.write(`  索引：${indexSummary.fileCount} 个文本文件 / ${indexSummary.totalLoc} 行（排除 ${indexSummary.excluded} 个二进制或超大文件）\n`);
+  }
+
+  process.stdout.write('\n下一步（不要让 agent 跳过第 1 条）：\n');
+  process.stdout.write('  1. 填 .ai/constitution.md 的"验证命令"——这是 AI 自证完成的唯一依据\n');
+  process.stdout.write('  2. 为高风险文件写摘要（省上下文的真正来源）：\n');
+  process.stdout.write('       node .ai/bin/ai-arch.mjs index --stale --json > .ai/cache/digest-request.json\n');
+  process.stdout.write('       # 交给 AI 产出摘要 JSON，再：node .ai/bin/ai-arch.mjs index --apply .ai/cache/digests.json\n');
+  process.stdout.write('  3. 健康检查：node .ai/bin/ai-arch.mjs doctor\n');
+  process.stdout.write('  4. 试生成一次任务包：node .ai/bin/ai-arch.mjs task "<一个真实任务>"\n');
+  process.stdout.write('\n提示：接入产生的 diff 建议单独提交，便于整体回退。\n');
+  return 0;
+}
+
+/* ------------------------------------------------------ install-shim */
+
+/** 把 `ai-arch` 命令装进用户 bin 目录，让它像 git 一样在任何目录可用。 */
+function cmdInstallShim(flags) {
+  const binDir = flagString(flags, 'bin', null);
+  const dryRun = flagBool(flags, 'dry-run');
+  // `--from <文件>`：单文件分发版的安装方式——把那个自包含的 ai-arch.mjs 直接装成命令。
+  // 默认值优先取打包版自报的路径（AI_ARCH_SELF），其次取直接运行的脚本路径。
+  const from = flagString(flags, 'from', null)
+    ?? process.env.AI_ARCH_SELF
+    ?? (process.env.AI_ARCH_BUNDLE_ROOT ? process.argv[1] : null);
+  const result = installShim({ binDir, dryRun, source: from });
+  if (!result.ok) {
+    process.stderr.write(`[ai-arch] ${result.error}\n`);
+    return 1;
+  }
+  if (flagBool(flags, 'json')) {
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    return 0;
+  }
+  process.stdout.write(`已安装命令${dryRun ? '（dry-run，未写盘）' : ''}：\n`);
+  for (const w of result.written) process.stdout.write(`  + ${w}\n`);
+  process.stdout.write(`\n安装目录：${result.target}\n`);
+  if (result.onPath) {
+    process.stdout.write('该目录已在 PATH 中 —— 重新打开终端后可直接用：ai-arch --help\n');
+  } else {
+    process.stdout.write('该目录**不在 PATH** 中。请手动加入（框架不会替你改系统配置）：\n');
+    if (result.platform === 'win32') {
+      process.stdout.write(`  setx PATH "%PATH%;${result.target}"\n`);
+      process.stdout.write('  （或：系统属性 → 环境变量 → 用户变量 Path → 新建 → 粘贴上面的目录）\n');
+    } else {
+      process.stdout.write(`  echo 'export PATH="$PATH:${result.target}"' >> ~/.profile\n`);
+    }
+    process.stdout.write('加完请重开终端，然后验证：ai-arch --version\n');
+  }
+  return 0;
+}
+
+/* --------------------------------------------------------- quickstart */
+
+function cmdQuickstart(args, flags) {
+  const target = path.resolve(flagString(flags, 'root', args[0] ?? process.cwd()));
+  const format = flagString(flags, 'format', 'markdown');
+  const prompt = buildQuickstartPrompt({
+    projectRoot: target,
+    frameworkDir: frameworkRoot(),
+    agent: flagString(flags, 'agent', null),
+    target: flagString(flags, 'pack', null),
+  });
+
+  if (flagBool(flags, 'json')) {
+    process.stdout.write(JSON.stringify({ projectRoot: target, frameworkDir: frameworkRoot(), prompt }, null, 2) + '\n');
+    return 0;
+  }
+  if (format === 'plain') {
+    process.stdout.write(prompt.replace(/^#.*$/gm, (m) => m) + '\n');
+    return 0;
+  }
+  process.stdout.write(prompt + '\n');
   return 0;
 }
 

@@ -20,6 +20,7 @@ const VALUED_HINTS = new Set([
   'src-dir', 'tests-dir', 'prompt', 'problem', 'level', 'contributors',
   'packageManager', 'runtime', 'language', 'engine', 'unityVersion',
   'ueVersion', 'godotVersion', 'renderPipeline', 'usesBlueprint', 'gdscript',
+  'agent', 'format', 'framework', 'bin', 'from',
 ]);
 
 export function parseArgs(argv = process.argv.slice(2)) {

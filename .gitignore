@@ -19,3 +19,6 @@ node_modules/
 
 # 搴﹂噺涓庤嚜娴嬩骇鐢熺殑涓存椂鐩綍
 .ai-test-tmp/
+
+# 打包产物（由 scripts/pack.mjs 生成，不入库）
+dist/

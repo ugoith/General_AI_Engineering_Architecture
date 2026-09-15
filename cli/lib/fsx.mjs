@@ -57,13 +57,21 @@ export function sha256(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+/**
+ * 去掉 UTF-8 BOM。
+ * Windows 工具（记事本、部分脚手架、PowerShell 的 Set-Content）会写出带 BOM 的 JSON，
+ * 直接 JSON.parse 会抛错——而这类错误一旦被 catch 吞掉，就会表现为"某个信号静默消失"。
+ */
+export function stripBom(text) {
+  return String(text).replace(/^\uFEFF/, '');
+}
+
 export function shortHash(hash, len = 10) {
   return String(hash ?? '').slice(0, len);
 }
 
 export function readJson(file) {
-  const raw = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
-  return JSON.parse(raw);
+  return JSON.parse(stripBom(fs.readFileSync(file, 'utf8')));
 }
 
 export function readJsonSafe(file, fallback = null) {

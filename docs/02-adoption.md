@@ -20,7 +20,25 @@ node ~/ai-arch/cli/ai-arch.mjs packs
 
 ## 二、接入步骤（以既有项目为例）
 
-### 第 0 步：确认工作区干净
+### 第 0 步（最快路径）：把提示词交给 AI
+
+如果你只是想让它跑起来，最省事的路径是让 agent 自己做：
+
+```bash
+node ~/ai-arch/cli/ai-arch.mjs quickstart --root . > 接入提示词.md
+# 把该文件内容贴给任意 AI 助手
+```
+
+或一条命令直接接入（它会自动识别项目类型、写 agent 指针、建索引）：
+
+```bash
+node ~/ai-arch/cli/ai-arch.mjs install --root . --dry-run   # 先看会写什么
+node ~/ai-arch/cli/ai-arch.mjs install --root .
+```
+
+下面的手工步骤用于你想逐步控制、或识别不准时。
+
+### 第 1 步：确认工作区干净
 
 ```bash
 git status          # 有未提交改动时先提交或 stash，便于 review 生成的 diff

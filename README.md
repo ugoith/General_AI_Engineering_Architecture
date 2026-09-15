@@ -81,25 +81,60 @@ node .ai/bin/ai-arch.mjs patterns --level M  # 这个规模允许/禁止什么�
 
 ## 快速开始
 
-### 场景 A：新建项目
+### 场景 0：让 AI 自己装（推荐，无需你懂任何命令）
 
-```bash
-git clone https://github.com/ugoith/General_AI_Engineering_Architecture.git ~/ai-arch
-cd ~/projects
-node ~/ai-arch/cli/ai-arch.mjs packs                                   # 看有哪些类型
-node ~/ai-arch/cli/ai-arch.mjs init my-service --pack software-app-medium
-cd my-service
-node .ai/bin/ai-arch.mjs doctor                                        # 健康检查
+复制下面这段给任意 AI 编码助手（Claude / Cursor / Codex / Copilot / WorkBuddy / 本地模型），它会自己判断项目类型并接入：
+
+```text
+请为当前项目接入 General AI Engineering Architecture（一个 AI 工程架构框架）。
+先执行：git clone https://github.com/ugoith/General_AI_Engineering_Architecture.git .ai-arch-framework
+再执行：node .ai-arch-framework/cli/ai-arch.mjs install --root .
+然后告诉我：你识别到的项目类型与置信度、生成了哪些文件、哪些文件因为"项目原有"被拒绝改动，
+以及 .ai/constitution.md 里还缺哪些验证命令需要我提供。不要覆盖我项目里已有的任何文件。
 ```
 
-### 场景 B：给已有项目接入（推荐先只做三步）
+想让它更精确（含验收标准、硬约束、失败处理），直接生成一份针对**你这个项目**的提示词：
 
 ```bash
-cd existing-project
-node ~/ai-arch/cli/ai-arch.mjs init . --pack software-app-medium --dry-run   # 先看会写什么
-node ~/ai-arch/cli/ai-arch.mjs init . --pack software-app-medium            # 已存在文件不会被覆盖
-node .ai/bin/ai-arch.mjs index                                             # 建立基线索引
-node .ai/bin/ai-arch.mjs scale --gaps                                      # 看当前规模与欠账
+node ~/ai-arch/cli/ai-arch.mjs quickstart --root .      # 打印针对本项目定制的提示词
+node ~/ai-arch/cli/ai-arch.mjs quickstart --root . --json   # 给脚本/agent 用
+```
+
+`quickstart` 会自动探测项目类型、项目名、引擎版本，并把**当前版本的真实命令**写进提示词——所以你不必记住任何参数。
+
+### 场景 1：自己一条命令接入
+
+```bash
+# install = 自动识别类型 + 生成骨架 + 写 agent 指针 + 建基线索引
+node ~/ai-arch/cli/ai-arch.mjs install --root .
+node ~/ai-arch/cli/ai-arch.mjs install --root . --dry-run      # 先看会写什么
+node ~/ai-arch/cli/ai-arch.mjs install --root . --pack game-unity   # 识别不准时手动指定
+```
+
+### 场景 2：装成命令，像 git 一样随处可用
+
+```bash
+node ~/ai-arch/cli/ai-arch.mjs install-shim          # 装到 ~/bin（不写系统目录、不改 PATH）
+ai-arch --version                                     # 重开终端后即可直接用
+```
+
+### 场景 3：单文件分发（给别人用）
+
+```bash
+node scripts/pack.mjs        # 产出 dist/ai-arch.mjs（~600KB，自包含）+ Windows/POSIX 启动器
+```
+
+`dist/ai-arch.mjs` 一个文件就够：内含全部 CLI、7 套模板、skills、schema 与规范快照，**零依赖、无需联网**。
+
+```bash
+node dist/ai-arch.mjs quickstart --root .     # 或 dist\ai-arch.cmd / ./dist/ai-arch
+```
+
+### 场景 4：新建项目 / 已懂命令
+
+```bash
+node ~/ai-arch/cli/ai-arch.mjs packs                                   # 看有哪些类型
+node ~/ai-arch/cli/ai-arch.mjs init my-service --pack software-app-medium
 ```
 
 ### 场景 C：日常任务循环（这是收益所在）
@@ -161,7 +196,10 @@ scripts/               validate.mjs（结构校验）+ selftest.mjs（端到端�
 
 | 命令 | 作用 |
 |---|---|
-| `init [dir] --pack <id>` | 初始化项目（默认不覆盖已存在文件） |
+| `quickstart [--root <目录>]` | **生成可粘贴给 AI 的接入提示词**（自动识别项目类型） |
+| `install [--root <目录>]` | **一条命令接入**：识别类型 + 生成骨架 + 写 agent 指针 + 建索引 |
+| `install-shim [--bin <目录>]` | 把 `ai-arch` 装成命令（像 git 一样随处可用） |
+| `init [dir] --pack <id>` | 用指定模板包初始化（已知类型时用） |
 | `index` / `index --stale` / `index --apply <file>` | 维护文件索引与语义摘要 |
 | `task "<描述>"` | 生成任务上下文包 |
 | `review --drift` / `--impact <文件>` / `--decisions` | 漂移检测 / 影响面 / 决策清单 |
@@ -170,9 +208,23 @@ scripts/               validate.mjs（结构校验）+ selftest.mjs（端到端�
 | `skill list\|show\|add` | 管理项目内任务知识 |
 | `doctor` | 项目健康检查 |
 | `packs` | 列出可用模板包 |
-| `upgrade` | 同步框架文件到当前版本（三态，默认 dry-run） |
+| `upgrade` | 同步框架文件到当前版本（四态，默认 dry-run） |
 
 详见 [`docs/system/07-cli.md`](docs/system/07-cli.md)。
+
+## 与 AI 工具的关系：`.ai/` 是唯一事实来源，agent 目录只放指针
+
+接入时会**只在你已经在用的 agent 目录**下写一行指针文件（`.claude/CLAUDE.md`、`.cursor/rules/`、`.codex/AGENTS.md`、`.github/copilot-instructions.md`、`.workbuddy/AGENTS.md`、`.continue/rules/`），内容只有"去读 `AGENTS.md` 与 `.ai/`"。这些文件**可随时删除**，项目原有同名文件**绝不覆盖**。
+
+**为什么不把核心放进 `.claude/`、`.workbuddy/` 这类目录**（这是一个刻意的架构决定）：
+
+| 理由 | 具体后果 |
+|---|---|
+| 会破坏 **工具无关** | 换 AI 工具时索引、任务包、ADR 全部要搬家；而这套架构最有价值的部分就是跨会话、跨工具的记忆 |
+| 破坏 **发现约定** | `AGENTS.md` 在仓库根是行业标准（[agents.md](https://agents.md)），各工具会话启动时自动加载；塞进子目录后多数工具不会自动发现 |
+| 语义是 **每机私有** | 例如 `.claude/settings.local.json` 通常被全局 gitignore；把团队知识放进去，同事看到的项目记忆都不一样 |
+
+所以：**核心在 `.ai/`（入库、工具无关），各工具目录只放一行指针（可删、可再生）**。这既满足"目录简洁"的诉求，也不牺牲可移植性。
 
 ## 为什么是"复制式脚手架"
 
