@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ugoith/General_AI_Engineering_Architecture/schema/pack.schema.json",
+  "title": "AI 工程架构模板包清单 (pack.json)",
+  "description": "描述一套 archetype 模板包。字段语义见 templates/_schema/pack.schema.md。",
+  "type": "object",
+  "required": ["id", "title", "description", "category", "scaleLevel", "variables", "dirs", "skills"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "description": "kebab-case，必须与所在目录名一致"
+    },
+    "title": { "type": "string", "minLength": 2 },
+    "description": { "type": "string", "minLength": 4 },
+    "category": {
+      "type": "string",
+      "enum": ["software", "game", "data", "embedded", "automation"]
+    },
+    "scaleLevel": { "type": "string", "enum": ["S", "M", "L", "XL"] },
+    "scaleHint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loc": { "type": "string" },
+        "modules": { "type": "string" },
+        "team": { "type": "string" },
+        "lifespan": { "type": "string" }
+      }
+    },
+    "language": { "type": "array", "items": { "type": "string" } },
+    "runtime": { "type": "string" },
+    "variables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "prompt", "default"],
+        "additionalProperties": false,
+        "properties": {
+          "key": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" },
+          "prompt": { "type": "string", "minLength": 1 },
+          "default": { "type": ["string", "null"] },
+          "choices": { "type": "array", "items": { "type": "string" } },
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "dirs": { "type": "array", "items": { "type": "string" } },
+    "compile": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file"],
+        "additionalProperties": false,
+        "properties": {
+          "file": { "type": "string" },
+          "action": { "type": "string", "enum": ["fill", "review", "delete"] },
+          "hint": { "type": "string" }
+        }
+      }
+    },
+    "protectedPatterns": { "type": "array", "items": { "type": "string" } },
+    "skills": { "type": "array", "items": { "type": "string" } }
+  }
+}

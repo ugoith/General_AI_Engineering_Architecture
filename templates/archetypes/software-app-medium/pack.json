@@ -1,0 +1,95 @@
+{
+  "id": "software-app-medium",
+  "title": "中型多模块应用 / 服务",
+  "description": "M 级：3–15 个模块、2–8 人协作、寿命半年以上的应用或服务，需要模块边界、ADR 与 CI 校验。",
+  "category": "software",
+  "scaleLevel": "M",
+  "scaleHint": {
+    "loc": "2k – 30k",
+    "modules": "3 – 15",
+    "team": "2 – 8 人",
+    "lifespan": "0.5 – 3 年"
+  },
+  "language": [
+    "typescript",
+    "python",
+    "csharp",
+    "java",
+    "go"
+  ],
+  "runtime": "node>=20 | python>=3.11 | dotnet8 | java21 | go1.22",
+  "variables": [
+    {
+      "key": "runtime",
+      "prompt": "运行时",
+      "default": "node>=20",
+      "choices": [
+        "node>=20",
+        "python>=3.11",
+        "dotnet8",
+        "java21",
+        "go1.22"
+      ]
+    },
+    {
+      "key": "packageManager",
+      "prompt": "包管理器",
+      "default": "npm",
+      "choices": [
+        "npm",
+        "pnpm",
+        "yarn",
+        "pip",
+        "uv",
+        "nuget",
+        "maven",
+        "gradle",
+        "go"
+      ]
+    }
+  ],
+  "dirs": [
+    "{{srcDir}}",
+    "{{srcDir}}/modules",
+    "{{testsDir}}"
+  ],
+  "compile": [
+    {
+      "file": ".ai/constitution.md",
+      "action": "fill",
+      "hint": "填技术栈与验证命令：单元测试、静态检查、构建、CI 四项都要有真实命令"
+    },
+    {
+      "file": "docs/architecture/overview.md",
+      "action": "fill",
+      "hint": "填模块表与主数据流；模块边界变更必须先写 ADR"
+    },
+    {
+      "file": "docs/architecture/data-model.md",
+      "action": "fill",
+      "hint": "填实体表、可验证的不变量与迁移/兼容策略"
+    },
+    {
+      "file": "docs/architecture/interfaces.md",
+      "action": "fill",
+      "hint": "填对外与跨模块契约、错误码约定、兼容性规则"
+    },
+    {
+      "file": "docs/runbooks/local-dev.md",
+      "action": "fill",
+      "hint": "填本地起服务步骤、环境变量表、迁移命令与常见故障排查"
+    }
+  ],
+  "protectedPatterns": [
+    "docs/architecture/**",
+    ".ai/decisions/**",
+    ".ai/index/files.json"
+  ],
+  "skills": [
+    "context-indexing",
+    "adr-writing",
+    "change-impact",
+    "code-review",
+    "test-strategy"
+  ]
+}

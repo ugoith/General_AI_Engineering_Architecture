@@ -1,0 +1,111 @@
+{
+  "id": "software-system-large",
+  "title": "大型多模块系统（平台雏形）",
+  "description": "L 级：15–60 个模块、多团队协作、寿命两年以上的系统，需要版本化契约、依赖规则自动化与性能预算。",
+  "category": "software",
+  "scaleLevel": "L",
+  "scaleHint": {
+    "loc": "30k – 200k",
+    "modules": "15 – 60",
+    "team": "8 – 30 人",
+    "lifespan": "2 – 5 年"
+  },
+  "language": [
+    "typescript",
+    "python",
+    "csharp",
+    "java",
+    "go"
+  ],
+  "runtime": "node>=20 | python>=3.11 | dotnet8 | java21 | go1.22",
+  "variables": [
+    {
+      "key": "runtime",
+      "prompt": "运行时",
+      "default": "node>=20",
+      "choices": [
+        "node>=20",
+        "python>=3.11",
+        "dotnet8",
+        "java21",
+        "go1.22"
+      ]
+    },
+    {
+      "key": "packageManager",
+      "prompt": "包管理器",
+      "default": "npm",
+      "choices": [
+        "npm",
+        "pnpm",
+        "yarn",
+        "pip",
+        "uv",
+        "nuget",
+        "maven",
+        "gradle",
+        "go"
+      ]
+    }
+  ],
+  "dirs": [
+    "{{srcDir}}",
+    "{{srcDir}}/modules",
+    "{{testsDir}}"
+  ],
+  "compile": [
+    {
+      "file": ".ai/constitution.md",
+      "action": "fill",
+      "hint": "填技术栈与全量验证命令：单元测试、契约测试、依赖规则检查、性能基准四项都要有真实命令"
+    },
+    {
+      "file": "docs/architecture/contracts/README.md",
+      "action": "fill",
+      "hint": "必须填：契约清单、每个契约的消费方与当前版本、弃用期长度与通知方式"
+    },
+    {
+      "file": "docs/architecture/dependency-rules.md",
+      "action": "fill",
+      "hint": "必须填：把每条依赖规则接进 CI——每条规则都要有一个能失败的检查命令"
+    },
+    {
+      "file": "docs/architecture/performance-budget.md",
+      "action": "fill",
+      "hint": "必须填：预算表每行的预算值、测量方式与责任人；没有测量方式的指标不要写进表里"
+    },
+    {
+      "file": "docs/architecture/overview.md",
+      "action": "fill",
+      "hint": "填领域/子系统边界、模块表（含 owner）、依赖方向与主数据流"
+    },
+    {
+      "file": "docs/architecture/data-model.md",
+      "action": "fill",
+      "hint": "填实体、数据所有权（每个实体一个 owner）、不变量与迁移策略"
+    },
+    {
+      "file": "docs/architecture/interfaces.md",
+      "action": "fill",
+      "hint": "填契约字段表、错误码、版本兼容矩阵与契约测试位置"
+    },
+    {
+      "file": "docs/runbooks/local-dev.md",
+      "action": "fill",
+      "hint": "填多模块本地起法、环境变量表、契约测试与基准测试的跑法"
+    }
+  ],
+  "protectedPatterns": [
+    "docs/architecture/**",
+    ".ai/decisions/**",
+    ".ai/index/files.json",
+    ".ai/registry.json"
+  ],
+  "skills": [
+    "context-indexing",
+    "adr-writing",
+    "change-impact",
+    "code-review",
+    "test-strategy"
+  ]
+}

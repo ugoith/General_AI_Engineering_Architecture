@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ugoith/General_AI_Engineering_Architecture/schema/index.schema.json",
+  "title": "AI 工程架构文件索引 (.ai/index/files.json)",
+  "description": "由 `ai-arch index` 生成。hash 用于判定是否需要重读源码；digest 是语义摘要，由 AI 生成、CLI 校验。字段语义见 docs/system/04-context-discipline.md。",
+  "type": "object",
+  "required": ["schemaVersion", "generated", "fileCount", "files", "summary"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "generated": { "type": "string", "description": "ISO 8601 时间戳" },
+    "root": { "type": "string", "default": "." },
+    "fileCount": { "type": "integer", "minimum": 0 },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "kind", "lang", "hash", "digest"],
+        "properties": {
+          "path": { "type": "string", "description": "相对项目根的 POSIX 路径" },
+          "kind": { "type": "string", "enum": ["text", "binary-or-large"], "description": "binary-or-large 表示不读取内容，只记录指纹" },
+          "lang": { "type": "string" },
+          "loc": { "type": ["integer", "null"], "description": "行数；二进制为 null" },
+          "bytes": { "type": "integer" },
+          "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "内容 SHA-256。hash 未变即无需重读源码" },
+          "imports": { "type": "array", "items": { "type": "string" }, "description": "解析到的内部依赖（外部包不入内）" },
+          "importedBy": { "type": "array", "items": { "type": "string" }, "description": "反向依赖，由 imports 计算" },
+          "owner": { "type": ["string", "null"] },
+          "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "digest": {
+            "type": "object",
+            "required": ["status", "stale"],
+            "properties": {
+              "status": { "type": "string", "enum": ["pending", "digest", "stale", "skeleton"] },
+              "purpose": { "type": ["string", "null"], "description": "≤ 200 字，说明为何存在、谁依赖它；不要复述代码" },
+              "exports": { "type": "array", "items": { "type": "string" } },
+              "invariants": { "type": "array", "items": { "type": "string" }, "description": "改这个文件时必须保持的约束" },
+              "risk": { "type": ["string", "null"], "enum": ["low", "medium", "high", null] },
+              "tags": { "type": "array", "items": { "type": "string" } },
+              "reviewedHash": { "type": ["string", "null"], "description": "该摘要对应的内容 hash；与 hash 不同即为 stale" },
+              "reviewedAt": { "type": ["string", "null"] },
+              "stale": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "byRisk": {
+          "type": "object",
+          "properties": {
+            "high": { "type": "integer" },
+            "medium": { "type": "integer" },
+            "low": { "type": "integer" }
+          }
+        },
+        "pendingDigest": { "type": "integer" },
+        "staleDigest": { "type": "integer" },
+        "totalLoc": { "type": "integer" }
+      }
+    }
+  }
+}

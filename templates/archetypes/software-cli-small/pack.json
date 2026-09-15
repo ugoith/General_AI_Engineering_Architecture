@@ -1,0 +1,70 @@
+{
+  "id": "software-cli-small",
+  "title": "小型 CLI / 脚本工具",
+  "description": "S 级：单人维护、两千行以内的命令行工具或一次性脚本，追求最少流程与最快上手。",
+  "category": "software",
+  "scaleLevel": "S",
+  "scaleHint": {
+    "loc": "< 2k",
+    "modules": "1",
+    "team": "1 人",
+    "lifespan": "< 3 月"
+  },
+  "language": [
+    "node",
+    "python"
+  ],
+  "runtime": "node>=20 | python>=3.11",
+  "variables": [
+    {
+      "key": "language",
+      "prompt": "主语言",
+      "default": "node",
+      "choices": [
+        "node",
+        "python"
+      ]
+    },
+    {
+      "key": "packageManager",
+      "prompt": "包管理器",
+      "default": "npm",
+      "choices": [
+        "npm",
+        "pnpm",
+        "yarn",
+        "pip",
+        "uv"
+      ]
+    }
+  ],
+  "dirs": [
+    "{{srcDir}}",
+    "{{testsDir}}"
+  ],
+  "compile": [
+    {
+      "file": ".ai/constitution.md",
+      "action": "fill",
+      "hint": "把“验证命令”表的占位行换成真实命令（运行/测试/检查），并补一条本项目特有的红线"
+    },
+    {
+      "file": "README.md",
+      "action": "fill",
+      "hint": "替换用法示例与退出码约定，确保“快速开始”能照着跑通"
+    },
+    {
+      "file": ".ai/index/files.json",
+      "action": "review",
+      "hint": "首次提交后运行 node .ai/bin/ai-arch.mjs index，写入真实 hash 与摘要"
+    }
+  ],
+  "protectedPatterns": [
+    "CHANGELOG.md",
+    ".ai/index/files.json"
+  ],
+  "skills": [
+    "context-indexing",
+    "bugfix-triage"
+  ]
+}

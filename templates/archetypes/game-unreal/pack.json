@@ -1,0 +1,23 @@
+{
+  "id": "game-unreal",
+  "title": "Unreal Engine 游戏项目",
+  "description": "用 Unreal Engine 与 C++/Blueprint 混合开发的游戏，含 .uasset/.umap 二进制资产与模块化 C++ 源码。",
+  "category": "game",
+  "scaleLevel": "M",
+  "scaleHint": { "loc": "10k – 80k", "modules": "5 – 25", "team": "3 – 12 人", "lifespan": "1 – 4 年" },
+  "language": ["cpp", "blueprint"],
+  "runtime": "unreal",
+  "variables": [
+    { "key": "ueVersion", "prompt": "Unreal Engine 版本", "default": "5.4" },
+    { "key": "usesBlueprint", "prompt": "是否使用 Blueprint 资产（false = 纯 C++）", "default": "true" },
+    { "key": "srcDir", "prompt": "C++ 源码根目录", "default": "Source" }
+  ],
+  "dirs": ["Source", "Source/{{projectTitle}}", "Source/{{projectTitle}}/Public", "Source/{{projectTitle}}/Private", "Config", "Content", "Content/Maps", "Content/Blueprints", "Content/Data", ".ai/index", ".ai/decisions"],
+  "compile": [
+    { "file": ".ai/constitution.md", "action": "fill", "hint": "填写引擎版本（含 hotfix）、目标平台、UBT/打包命令与产物路径" },
+    { "file": ".ai/index/asset-index.md", "action": "fill", "hint": "按索引规范登记首批 Map、Blueprint、DataAsset 与 PrimaryAsset 规则" },
+    { "file": "{{projectTitle}}.uproject", "action": "review", "hint": "确认 EngineAssociation 与模块列表；改模块列表后必须重新生成项目文件" }
+  ],
+  "protectedPatterns": ["Content/**", "Config/**", "*.uproject", "docs/architecture/**"],
+  "skills": ["context-indexing", "adr-writing", "game-engine-conventions", "code-review"]
+}

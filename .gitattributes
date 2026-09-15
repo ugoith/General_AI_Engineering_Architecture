@@ -1,0 +1,16 @@
+# 统一行尾：所有文本文件使用 LF（跨平台一致性）。
+# 理由：本框架要求跨平台（见 docs/system/01-constitution.md 硬约束），
+# 行尾不一致会造成模板渲染结果、hash 与摘要的"假变更"。
+* text=auto eol=lf
+
+# 明确二进制的类型（避免被当作文本处理）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.exe binary
+*.dll binary

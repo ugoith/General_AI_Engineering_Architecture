@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit 与 user-scalable=no：触摸游戏需要避免双击缩放与页面滚动 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <title>{{projectTitle}}</title>
+    <style>
+      /* 画布铺满视口；触摸相关 CSS 属性防止浏览器手势吞掉游戏输入 */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #101014;
+        overflow: hidden;
+        touch-action: none;
+      }
+      #game-canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        touch-action: none;
+      }
+      /* 加载遮罩：真实进度由 assets 加载器更新（见 docs/architecture/asset-loading.md） */
+      #boot-overlay {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: #e8e8ee;
+        font: 14px/1.6 system-ui, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game-canvas"></canvas>
+    <div id="boot-overlay">正在加载…</div>
+    <script type="module" src="/{{srcDir}}/main.ts"></script>
+  </body>
+</html>

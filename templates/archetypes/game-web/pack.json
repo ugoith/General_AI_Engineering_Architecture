@@ -1,0 +1,24 @@
+{
+  "id": "game-web",
+  "title": "Web 游戏项目（TypeScript）",
+  "description": "浏览器里运行的 2D/3D 游戏，基于 TypeScript 与主流渲染引擎，帧循环与加载体积是主要约束。",
+  "category": "game",
+  "scaleLevel": "M",
+  "scaleHint": { "loc": "3k – 40k", "modules": "4 – 15", "team": "1 – 6 人", "lifespan": "0.5 – 3 年" },
+  "language": ["typescript"],
+  "runtime": "browser",
+  "variables": [
+    { "key": "engine", "prompt": "渲染/游戏引擎", "default": "phaser", "choices": ["phaser", "pixi", "three", "babylon", "vanilla-canvas"] },
+    { "key": "packageManager", "prompt": "包管理器", "default": "npm", "choices": ["npm", "pnpm", "yarn"] },
+    { "key": "srcDir", "prompt": "源码根目录", "default": "src" },
+    { "key": "testsDir", "prompt": "测试根目录", "default": "tests" }
+  ],
+  "dirs": ["{{srcDir}}", "{{srcDir}}/systems", "{{srcDir}}/scenes", "{{srcDir}}/assets", "{{testsDir}}", "public/assets", ".ai/index", ".ai/decisions"],
+  "compile": [
+    { "file": ".ai/constitution.md", "action": "fill", "hint": "把性能预算表填成实测数字（帧时间、首屏 JS 体积、绘制调用），并写明本机可用的构建命令" },
+    { "file": ".ai/index/files.json", "action": "fill", "hint": "登记首批文件摘要；assets 清单与加载器配置要一并登记" },
+    { "file": "package.json", "action": "review", "hint": "确认 scripts（dev/build/preview/typecheck）与依赖版本；每新增一个运行时依赖都要在此复核并有 ADR" }
+  ],
+  "protectedPatterns": ["public/assets/**", "docs/architecture/**", "package.json"],
+  "skills": ["context-indexing", "adr-writing", "game-engine-conventions", "code-review", "test-strategy"]
+}

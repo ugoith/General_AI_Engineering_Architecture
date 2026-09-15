@@ -1,0 +1,38 @@
+{
+  "name": "@ugoith/ai-arch",
+  "version": "0.1.0",
+  "description": "AI 原生工程级架构框架的零依赖 CLI：初始化项目、维护索引、生成任务上下文包、检测规范漂移。",
+  "type": "module",
+  "bin": {
+    "ai-arch": "cli/ai-arch.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "cli",
+    "schema",
+    "templates",
+    "skills",
+    "docs/system",
+    "AGENTS.md"
+  ],
+  "scripts": {
+    "validate": "node scripts/validate.mjs",
+    "selftest": "node scripts/selftest.mjs",
+    "test": "node scripts/validate.mjs && node scripts/selftest.mjs"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "architecture",
+    "scaffold",
+    "context-engineering",
+    "agents-md"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ugoith/General_AI_Engineering_Architecture.git"
+  }
+}
