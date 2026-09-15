@@ -134,6 +134,7 @@ export function initProject(dir, opts = {}) {
   const target = path.resolve(dir);
   const written = [];
   const skipped = [];
+  const created = [];   // 本次由框架**新建**的文件
   const managed = {};
 
   for (const [rel, node] of Object.entries(plan.files)) {
@@ -143,12 +144,18 @@ export function initProject(dir, opts = {}) {
       skipped.push(relPosix);
       continue;
     }
+    const existedBefore = isFile(abs);
     if (!dryRun) {
       ensureDir(path.dirname(abs));
       fs.writeFileSync(abs, node.text, 'utf8');
     }
     written.push(relPosix);
-    managed[relPosix] = sha256(node.text);
+    // 关键：只有"框架新建/覆盖"的文件才登记为托管。
+    // 跳过的文件（项目原有的 .gitignore 等）绝不能登记，否则 upgrade 会认为它是框架文件而覆盖它。
+    if (!existedBefore || force) {
+      created.push(relPosix);
+      managed[relPosix] = sha256(node.text);
+    }
   }
 
   for (const rel of plan.dirs) {
@@ -321,7 +328,15 @@ export function copyTemplateSnapshot(target, { dryRun = false } = {}) {
 
 /**
  * `upgrade`：把项目里的框架托管文件同步到当前框架版本。
- * 三态：未被本地改动 → 覆盖；被本地改动 → 保留并报告；已删除 → 报告。
+ *
+ * 四态处理：
+ *  1. 框架托管 + 本地未改动      → 覆盖为框架最新版
+ *  2. 框架托管 + 本地已改动      → 保留并报告（`--force` 可强制覆盖）
+ *  3. 框架托管但文件已被删除     → 报告（不恢复：可能是用户有意删除）
+ *  4. **从未托管过的现存文件**   → 一律跳过并报告，`--force` 也不覆盖
+ *
+ * 第 4 条是安全底线：项目原有文件（例如自己的 `.gitignore`）绝不能被框架覆盖，
+ * 否则等于销毁用户内容。要接管这类文件必须由用户显式删除后重跑 `init`。
  */
 export function upgradeProject(projectRoot, opts = {}) {
   const { dryRun = true, force = false, now = new Date() } = opts;
@@ -345,6 +360,7 @@ export function upgradeProject(projectRoot, opts = {}) {
   const created = [];
   const removed = [];
   const protectedFiles = [];
+  const notManaged = [];
 
   const managed = meta.managed ?? {};
   const affected = new Set();
@@ -361,34 +377,38 @@ export function upgradeProject(projectRoot, opts = {}) {
       continue;
     }
     if (!isFile(abs)) {
-      if (oldHash === undefined) {
-        // 框架新增的文件
-        if (newHash !== oldHash) {
-          if (!dryRun) {
-            ensureDir(path.dirname(abs));
-            fs.writeFileSync(abs, node.text, 'utf8');
-          }
-          created.push(relPosix);
-          managed[relPosix] = newHash;
-        }
-      } else {
-        removed.push(relPosix);
-      }
+      // 文件已不在项目里：只有"框架曾经创建过"的才可能是被用户删除，才报告 removed。
+      // 从未托管过的文件不存在 → 什么都没发生（绝不能据此创建！）
+      if (oldHash !== undefined) removed.push(relPosix);
       continue;
     }
     const currentHash = sha256(fs.readFileSync(abs, 'utf8'));
-    if (currentHash === newHash) continue; // 已是最新
-    if (oldHash && currentHash !== oldHash) {
-      changedLocally.push(relPosix);
+    if (currentHash === newHash) {
+      // 内容与框架版本一致：直接接管为托管（此前可能是 init 跳过的文件，恰好内容相同）
+      if (oldHash === undefined) managed[relPosix] = newHash;
       continue;
     }
-    if (force || !oldHash) {
-      if (!dryRun) fs.writeFileSync(abs, node.text, 'utf8');
-      updated.push(relPosix);
-      managed[relPosix] = newHash;
+    // 从未托管的现存文件 = 项目原有文件。无论 --force 与否，upgrade 都不允许接管或覆盖它：
+    // 覆盖它等于销毁用户内容（真实案例：UE 项目的 .gitignore 被模板版覆盖）。
+    // 想接管请显式删除该文件后重跑 init，或先用 --dry-run 确认影响面。
+    if (oldHash === undefined) {
+      notManaged.push(relPosix);
       continue;
     }
-    changedLocally.push(relPosix);
+    if (currentHash !== oldHash) {
+      // 框架托管但被本地改过：默认保留；--force 才覆盖（这是显式的破坏性要求）
+      if (force) {
+        if (!dryRun) fs.writeFileSync(abs, node.text, 'utf8');
+        updated.push(relPosix);
+        managed[relPosix] = newHash;
+      } else {
+        changedLocally.push(relPosix);
+      }
+      continue;
+    }
+    if (!dryRun) fs.writeFileSync(abs, node.text, 'utf8');
+    updated.push(relPosix);
+    managed[relPosix] = newHash;
   }
 
   for (const rel of Object.keys(managed)) {
@@ -417,6 +437,7 @@ export function upgradeProject(projectRoot, opts = {}) {
     updated: updated.sort(),
     created: created.sort(),
     changedLocally: changedLocally.sort(),
+    notManaged: notManaged.sort(),
     removed: removed.sort(),
     protectedFiles: protectedFiles.sort(),
     toolchain: toolCopies.written.length,

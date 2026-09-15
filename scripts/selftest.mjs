@@ -371,6 +371,81 @@ async function extraTests() {
     assert(strict.code === 1, `--strict 应返回 1，实际 ${strict.code}`);
     pass();
 
+    begin('行为：.gitignore 的目录规则被正确解析（防止生成物污染索引）');
+    // 回归测试：真实事故——UE 项目 .gitignore 写 `Binaries/*`、`Intermediate/*`，
+    // 旧解析器把它当成普通 glob，导致 Plugins/*/Intermediate 下 UHT 生成的 .gen.cpp 被索引。
+    const gi = tmpDir('gitignore');
+    fs.writeFileSync(path.join(gi, '.gitignore'), [
+      '# 依赖',
+      'node_modules/',
+      'Binaries/*',
+      'Plugins/*/Binaries/*',
+      'Intermediate/*',
+      'Plugins/*/Intermediate/*',
+      'DerivedDataCache/*',
+      '*.log',
+      '!keep.log',
+      '',
+    ].join('\n'), 'utf8');
+    const dirsToMake = ['Source/AGLS/Private', 'Plugins/Foo/Intermediate/Build/UHT', 'Plugins/Foo/Binaries/Win64', 'Intermediate/Build', 'DerivedDataCache', 'Content', 'node_modules/pkg'];
+    for (const d of dirsToMake) fs.mkdirSync(path.join(gi, d), { recursive: true });
+    const write = (rel, text) => fs.writeFileSync(path.join(gi, rel), text, 'utf8');
+    write('Source/AGLS/Private/Real.cpp', 'int main(){return 0;}\n');
+    write('Plugins/Foo/Intermediate/Build/UHT/Gen.gen.cpp', '// 生成物\n');
+    write('Plugins/Foo/Binaries/Win64/Foo.modules', 'artifact\n');
+    write('Intermediate/Build/Thing.obj', 'x\n');
+    write('DerivedDataCache/cache.bin', 'x\n');
+    write('Content/keep.uasset', 'not-really-binary-for-this-test\n');
+    write('debug.log', 'log\n');
+    write('node_modules/pkg/index.js', 'x\n');
+    await run(['init', gi, '--pack', 'software-app-medium']);
+    await prun(gi, ['index']);
+    const giIdx = loadIndex(gi);
+    const paths = giIdx.files.map((f) => f.path);
+    assert(paths.includes('Source/AGLS/Private/Real.cpp'), '真实源码未被索引');
+    for (const bad of [
+      'Plugins/Foo/Intermediate/Build/UHT/Gen.gen.cpp',
+      'Plugins/Foo/Binaries/Win64/Foo.modules',
+      'Intermediate/Build/Thing.obj',
+      'DerivedDataCache/cache.bin',
+      'debug.log',
+      'node_modules/pkg/index.js',
+    ]) {
+      assert(!paths.includes(bad), `.gitignore 中的目录规则未生效，生成物被索引：${bad}`);
+    }
+    fs.rmSync(gi, { recursive: true, force: true });
+    pass();
+
+    begin('行为：接入既有项目时，框架绝不覆盖项目原有文件');
+    // 回归测试：真实事故——某 UE 项目接入后，upgrade 把项目自己的 .gitignore 覆盖成模板版。
+    // 根因：upgrade 把"未登记在 managed 里的现存文件"误判为"框架新增文件"从而写入。
+    const legacy = tmpDir('legacy');
+    const ownGitignore = '# 项目原有的忽略规则（框架不得触碰）\nBinaries/*\nIntermediate/*\nDerivedDataCache/*\n';
+    const ownAgents = '# 项目原有的 AGENTS.md（框架不得触碰）\n\n## 硬约束（不可协商）\n\n- 保留这一行\n\n## 工作路由表（先查表，再动手）\n\n| 任务 | 做法 |\n|---|---|\n| x | y |\n\n## 提交前必须做\n\n- 保留\n';
+    fs.writeFileSync(path.join(legacy, '.gitignore'), ownGitignore, 'utf8');
+    fs.writeFileSync(path.join(legacy, 'AGENTS.md'), ownAgents, 'utf8');
+    await run(['init', legacy, '--pack', 'software-app-medium']);
+
+    // init 之后：两个文件必须原样
+    assert(fs.readFileSync(path.join(legacy, '.gitignore'), 'utf8') === ownGitignore, 'init 覆盖了项目原有的 .gitignore');
+    assert(fs.readFileSync(path.join(legacy, 'AGENTS.md'), 'utf8') === ownAgents, 'init 覆盖了项目原有的 AGENTS.md');
+    // 且它们不得被登记为框架托管
+    const legacyMeta = readJsonSafe(path.join(legacy, '.ai', 'framework.json'), null);
+    assert(!Object.keys(legacyMeta?.managed ?? {}).includes('.gitignore'),
+      '.gitignore 被错误登记为框架托管文件（upgrade 会据此覆盖它）');
+
+    // upgrade（含 --apply 与 --force）都不得触碰项目原有文件
+    await prun(legacy, ['upgrade', '--apply']);
+    assert(fs.readFileSync(path.join(legacy, '.gitignore'), 'utf8') === ownGitignore, 'upgrade 覆盖了项目原有的 .gitignore');
+    assert(fs.readFileSync(path.join(legacy, 'AGENTS.md'), 'utf8') === ownAgents, 'upgrade 覆盖了项目原有的 AGENTS.md');
+    const forced = JSON.parse((await prun(legacy, ['upgrade', '--apply', '--force', '--json'])).stdout);
+    assert(fs.readFileSync(path.join(legacy, '.gitignore'), 'utf8') === ownGitignore, 'upgrade --force 覆盖了项目原有的 .gitignore（--force 只能用于框架托管文件）');
+    assert(fs.readFileSync(path.join(legacy, 'AGENTS.md'), 'utf8') === ownAgents, 'upgrade --force 覆盖了项目原有的 AGENTS.md');
+    assert(Array.isArray(forced.notManaged) && forced.notManaged.includes('.gitignore'),
+      `upgrade 未把项目原有文件报告为 notManaged（实际：${JSON.stringify(forced.notManaged ?? [])}）`);
+    fs.rmSync(legacy, { recursive: true, force: true });
+    pass();
+
     begin('行为：未初始化目录给出可行动报错');
     const empty = tmpDir('empty');
     const res = await run(['index', empty], { expectCode: null, quiet: true });

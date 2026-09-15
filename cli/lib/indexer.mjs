@@ -12,9 +12,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   walk, sha256, countLines, languageOf, readJsonSafe, writeJson, normalizeRel,
-  matchesAny, isProbablyText, toPosix,
+  matchesAny, isProbablyText, toPosix, readGitignore,
 } from './fsx.mjs';
 import { candidatePathsOf } from './pathc.mjs';
+import { DEFAULT_INDEX_MAX_BYTES } from './limits.mjs';
 
 export const INDEX_SCHEMA_VERSION = 1;
 
@@ -49,11 +50,16 @@ export function scanProject(root, opts = {}) {
   const {
     extraIgnore = [],
     previous = null,
-    maxFileBytes = 512 * 1024,
+    maxFileBytes = DEFAULT_INDEX_MAX_BYTES,
   } = opts;
-  const { files: relFiles } = walk(root, { ignore: extraIgnore });
+  // 必须叠加项目自己的 .gitignore：
+  // 各技术栈的生成物目录（UE 的 Binaries/Intermediate/DerivedDataCache、Unity 的 Library/Temp…）
+  // 主要靠项目 .gitignore 声明。忽略它就等于把生成的 .gen.cpp、.modules、缓存全当源码索引。
+  const gitignorePatterns = readGitignore(root);
+  const { files: relFiles } = walk(root, { ignore: [...extraIgnore, ...gitignorePatterns] });
   const prevMap = new Map((previous?.files ?? []).map((f) => [f.path, f]));
   const entries = [];
+  let excluded = 0;
 
   for (const rel of relFiles) {
     if (matchesAny(rel, ['.ai/index/files.json'])) continue;
@@ -67,21 +73,29 @@ export function scanProject(root, opts = {}) {
     } catch {
       continue;
     }
-    const text = stat.size <= maxFileBytes && isProbablyText(abs)
-      ? fs.readFileSync(abs, 'utf8')
-      : null;
-    const hash = text === null
-      ? sha256(`binary:${stat.size}`)
-      : sha256(text);
+
+    // 只索引"可读且值得读"的文本文件。
+    // 理由（实测：某 UE 项目 6682 个文件中 90.3% 是二进制，其中多个 .pdb 超过 60MB）：
+    //   1. 二进制/超大文件读不了，永远只会显示 read-source，污染任务读取清单；
+    //   2. 它们把 files.json 撑到 MB 级，索引本身变成上下文负担；
+    //   3. 资产/资源应记在各自类型的资产索引（如 UE 的 .ai/index/asset-index.md），不在这里。
+    // 这意味着索引**只描述源码与文本配置**：把源码目录配错，索引就是空的（doctor 会报 index-empty）。
+    if (stat.size > maxFileBytes || !isProbablyText(abs)) {
+      excluded += 1;
+      continue;
+    }
+
+    const text = fs.readFileSync(abs, 'utf8');
+    const hash = sha256(text);
     const prev = prevMap.get(rel);
     const lang = languageOf(rel);
-    const loc = text === null ? null : countLines(text);
-    const imports = text === null ? [] : extractImports(text, rel);
+    const loc = countLines(text);
+    const imports = extractImports(text, rel);
     const digest = reconcileDigest(prev, hash);
 
     entries.push({
       path: rel,
-      kind: text === null ? 'binary-or-large' : 'text',
+      kind: 'text',
       lang,
       loc,
       bytes: stat.size,
@@ -104,6 +118,10 @@ export function scanProject(root, opts = {}) {
     root: '.',
     fileCount: entries.length,
     files: entries,
+    excluded: {
+      count: excluded,
+      reason: `非文本或超过 ${Math.round(maxFileBytes / 1024)}KB 的文件不进入索引（见 docs/system/04-context-discipline.md）`,
+    },
     summary: summarize(entries),
   };
 }

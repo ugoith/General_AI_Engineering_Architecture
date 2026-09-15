@@ -169,20 +169,48 @@ export function escapeRegExp(s) {
 
 export function matchesAny(relPath, patterns = []) {
   const p = normalizeRel(relPath);
-  return patterns.some((pattern) => {
-    if (pattern.endsWith('/')) return p === pattern.slice(0, -1) || p.startsWith(pattern);
-    if (pattern.endsWith('/**')) {
-      const base = pattern.slice(0, -3);
-      return p === base || p.startsWith(base + '/');
-    }
-    if (!pattern.includes('*') && !pattern.includes('{')) {
-      return p === normalizeRel(pattern);
-    }
-    return globToRegExp(pattern).test(p);
-  });
+  return patterns.some((pattern) => matchesOne(p, pattern));
 }
 
-/** 读取 .gitignore，转成与 matchesAny 兼容的模式列表。 */
+function matchesOne(p, pattern) {
+  // 目录模式（以 / 结尾）：匹配该目录本身及其下所有内容。
+  // 支持带通配符的目录，例如 `Plugins/*/Intermediate/`（UE 项目的 .gitignore 常见写法）。
+  if (pattern.endsWith('/')) {
+    const base = pattern.slice(0, -1);
+    if (p === base || p.startsWith(base + '/')) return true;
+    if (base.includes('*') || base.includes('{')) {
+      const re = globToRegExp(base);
+      if (re.test(p)) return true;
+      // 逐级前缀匹配：只要路径中有一段完整落在该目录内，就视为被忽略
+      const segments = p.split('/');
+      for (let i = 1; i < segments.length; i += 1) {
+        if (re.test(segments.slice(0, i).join('/'))) return true;
+      }
+    }
+    return false;
+  }
+  if (pattern.endsWith('/**')) {
+    const base = pattern.slice(0, -3);
+    return p === base || p.startsWith(base + '/');
+  }
+  if (!pattern.includes('*') && !pattern.includes('{')) {
+    return p === normalizeRel(pattern);
+  }
+  return globToRegExp(pattern).test(p);
+}
+
+/**
+ * 读取 .gitignore，转成与 matchesAny 兼容的模式列表。
+ *
+ * 覆盖的语法：
+ *  - `name`          → 匹配任意层级下的该名字，也匹配目录（等价 `**\/name`）
+ *  - `/name` 或 `name/` → 锚定到仓库根
+ *  - `dir/*`         → **等价于忽略整个 dir 目录**（git 语义：dir 内不允许重新包含）
+ *                      这一条很关键：UE 的 `.gitignore` 写的是 `Binaries/*`、`Intermediate/*`，
+ *                      若不按此处理，`Plugins/*​/Intermediate/...` 里的 UHT 生成代码会被误索引。
+ *  - `a/**`、`*.ext`、`**\/name` 等交给 globToRegExp
+ *  - 以 `!` 开头的否定规则：本实现不处理（保守做法，宁多索引不少索引）
+ */
 export function readGitignore(root) {
   const file = path.join(root, '.gitignore');
   if (!isFile(file)) return [];
@@ -190,17 +218,42 @@ export function readGitignore(root) {
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    if (trimmed.startsWith('!')) continue;
+    if (trimmed.startsWith('!')) continue; // 否定规则不支持：保守处理
+
+    const anchored = trimmed.startsWith('/');
     let p = normalizeRel(trimmed.replace(/^\//, ''));
-    if (!p.includes('/') && !p.includes('*')) {
-      patterns.push(p, '**/' + p, p + '/');
+    if (!p) continue;
+
+    // `dir/*`、`a/*/b/*` → 整个末级目录（git 语义：目录内不允许重新包含）
+    // 这一条覆盖 UE 的 `Binaries/*`、`Plugins/*/Intermediate/*` 等写法。
+    if (p.endsWith('/*')) {
+      const dir = p.slice(0, -2);
+      const variants = [dir + '/'];
+      if (!anchored) variants.push('**/' + dir + '/');
+      patterns.push(...variants);
       continue;
     }
-    if (p.startsWith('**/')) {
-      patterns.push(p.slice(3), p);
+    // `dir/**` → 整个 dir 目录
+    if (p.endsWith('/**')) {
+      const dir = p.slice(0, -3);
+      const variants = [dir + '/'];
+      if (!anchored) variants.push('**/' + dir + '/');
+      patterns.push(...variants);
       continue;
     }
-    patterns.push(p, '**/' + p);
+    // 显式目录 `dir/`
+    if (p.endsWith('/')) {
+      patterns.push(p);
+      if (!anchored) patterns.push('**/' + p);
+      continue;
+    }
+    if (p.includes('*') || p.includes('{')) {
+      patterns.push(p);
+      if (!anchored) patterns.push('**/' + p);
+      continue;
+    }
+    // 裸名字：任意层级、文件或目录
+    patterns.push(p, '**/' + p, p + '/', '**/' + p + '/');
   }
   return patterns;
 }

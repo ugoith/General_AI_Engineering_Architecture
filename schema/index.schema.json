@@ -12,12 +12,13 @@
     "fileCount": { "type": "integer", "minimum": 0 },
     "files": {
       "type": "array",
+      "description": "只包含文本文件与文本配置。非文本或超过 DEFAULT_INDEX_MAX_BYTES（cli/lib/limits.mjs）的文件被排除，不计入 fileCount，也不出现在任何任务读取清单里；排除数量记录在 excluded.count。资产/资源应由各类型的资产索引（如 UE 的 .ai/index/asset-index.md）描述。",
       "items": {
         "type": "object",
         "required": ["path", "kind", "lang", "hash", "digest"],
         "properties": {
           "path": { "type": "string", "description": "相对项目根的 POSIX 路径" },
-          "kind": { "type": "string", "enum": ["text", "binary-or-large"], "description": "binary-or-large 表示不读取内容，只记录指纹" },
+          "kind": { "type": "string", "enum": ["text"], "description": "索引只收录文本文件；二进制与超大文件被排除" },
           "lang": { "type": "string" },
           "loc": { "type": ["integer", "null"], "description": "行数；二进制为 null" },
           "bytes": { "type": "integer" },

@@ -38,3 +38,12 @@ export const LARGE_INDEX_HINT = 400;
 
 /** 单个源码文件的 token 估算系数（token/行）。 */
 export const TOKENS_PER_LOC = 9;
+
+/**
+ * 索引入口的大小上限：超过该值的文件不进入 `.ai/index/files.json`。
+ *
+ * 依据（实测）：某 UE 项目 6682 个可遍历文件中 90.3% 是二进制，其中多个 `.pdb` 超过 60MB；
+ * 把它们计入索引会让 files.json 涨到 4.2MB，且每个条目都只会被判为 `read-source`，
+ * 直接摧毁任务包的上下文预算。256KB 足以覆盖正常源码与文本配置。
+ */
+export const DEFAULT_INDEX_MAX_BYTES = 256 * 1024;

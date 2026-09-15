@@ -586,9 +586,14 @@ function cmdUpgrade(root, flags) {
   section('将更新（本地未改动）', result.updated);
   section('将新增', result.created);
   section('本地已改动，保留不动（需人工合并）', result.changedLocally);
+  section('项目原有文件，框架不接管也不覆盖', result.notManaged);
   section('本地已删除（不会被恢复）', result.removed);
   section('受保护，跳过', result.protectedFiles);
   process.stdout.write(`工具链同步 ${result.toolchain} 个文件；skills ${result.skills} 个；框架规范快照 ${result.frameworkDocs} 个。\n`);
+  if (result.notManaged.length > 0) {
+    process.stdout.write('\n说明：上面"项目原有文件"是 init 时已存在、由你维护的文件（例如你自己的 .gitignore）。\n'
+      + '框架永不覆盖它们。若确实想用框架版本替换，请先自行删除该文件再跑 init。\n');
+  }
   if (result.changedLocally.length > 0 && !force) {
     process.stdout.write('\n提示：上面"本地已改动"的文件是你的项目资产，框架不会覆盖。若确认要用框架版本覆盖，加 --force。\n');
   }
