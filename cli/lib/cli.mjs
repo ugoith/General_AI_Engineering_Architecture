@@ -1097,4 +1097,21 @@ function appliesAt(pattern, level) {
   return order.indexOf(level) >= order.indexOf(pattern.minLevel);
 }
 
-export { USAGE, PACK_LIMITS };
+/**
+ * `bin` 符号：npm / npx 约定优先使用具名导出的 CLI 对象（如 `dsh` 包导出 `CLI`），
+ * 只有在没有该导出时才回落到直接执行 `bin` 指向的文件。
+ *
+ * 为什么必须显式提供：本框架依赖 `npx github:<repo> <args>` 这条最简安装路径。
+ * 若只靠"执行 bin 文件"，行为取决于 npm 版本与 shim 实现，属于巧合而非契约——
+ * 一旦 npm 改变策略就会发现命令"静默什么都不做"，而这种失败极难定位。
+ */
+export const CLI = {
+  name: 'ai-arch',
+  async run(argv = process.argv.slice(2)) {
+    const code = await main(argv);
+    if (code !== 0) process.exitCode = code;
+    return code;
+  },
+};
+
+export { PACK_LIMITS };

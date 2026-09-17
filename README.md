@@ -83,12 +83,13 @@ node .ai/bin/ai-arch.mjs patterns --level M  # 这个规模允许/禁止什么�
 
 ### 场景 0：让 AI 自己装（推荐，无需你懂任何命令）
 
-复制下面这段给任意 AI 编码助手（Claude / Cursor / Codex / Copilot / WorkBuddy / 本地模型），它会自己判断项目类型并接入：
+复制下面这段给任意 AI 编码助手（Claude / Cursor / Codex / Copilot / Gemini / DeepSeek Harness / 本地模型）：
 
 ```text
 请为当前项目接入 General AI Engineering Architecture（一个 AI 工程架构框架）。
-先执行：git clone https://github.com/ugoith/General_AI_Engineering_Architecture.git .ai-arch-framework
-再执行：node .ai-arch-framework/cli/ai-arch.mjs install --root .
+执行：npx -y github:ugoith/General_AI_Engineering_Architecture install --root .
+（若 npx 不可用，改用：git clone https://github.com/ugoith/General_AI_Engineering_Architecture.git .ai-arch-framework
+ 然后 node .ai-arch-framework/cli/ai-arch.mjs install --root .）
 然后告诉我：你识别到的项目类型与置信度、生成了哪些文件、哪些文件因为"项目原有"被拒绝改动，
 以及 .ai/constitution.md 里还缺哪些验证命令需要我提供。不要覆盖我项目里已有的任何文件。
 ```
@@ -96,32 +97,33 @@ node .ai/bin/ai-arch.mjs patterns --level M  # 这个规模允许/禁止什么�
 想让它更精确（含验收标准、硬约束、失败处理），直接生成一份针对**你这个项目**的提示词：
 
 ```bash
-node ~/ai-arch/cli/ai-arch.mjs quickstart --root .      # 打印针对本项目定制的提示词
-node ~/ai-arch/cli/ai-arch.mjs quickstart --root . --json   # 给脚本/agent 用
+npx -y github:ugoith/General_AI_Engineering_Architecture quickstart --root .
 ```
 
 `quickstart` 会自动探测项目类型、项目名、引擎版本，并把**当前版本的真实命令**写进提示词——所以你不必记住任何参数。
 
-### 场景 1：自己一条命令接入
+### 场景 1：一条命令接入（不需要克隆）
 
 ```bash
-# install = 自动识别类型 + 生成骨架 + 写 agent 指针 + 建基线索引
-node ~/ai-arch/cli/ai-arch.mjs install --root .
-node ~/ai-arch/cli/ai-arch.mjs install --root . --dry-run      # 先看会写什么
-node ~/ai-arch/cli/ai-arch.mjs install --root . --pack game-unity   # 识别不准时手动指定
+npx -y github:ugoith/General_AI_Engineering_Architecture install --root .
+npx -y github:ugoith/General_AI_Engineering_Architecture install --root . --dry-run        # 先看会写什么
+npx -y github:ugoith/General_AI_Engineering_Architecture install --root . --pack game-unity # 识别不准时指定
 ```
+
+`install` = 自动识别项目类型 + 生成骨架 + 写各 agent 的指针与技能 + 建基线索引 + 探测项目能力。
+已存在文件默认不动；**识别有冲突时拒绝猜**，要求 `--pack`。
 
 ### 场景 2：装成命令，像 git 一样随处可用
 
 ```bash
-node ~/ai-arch/cli/ai-arch.mjs install-shim          # 装到 ~/bin（不写系统目录、不改 PATH）
-ai-arch --version                                     # 重开终端后即可直接用
+npx -y github:ugoith/General_AI_Engineering_Architecture install-shim   # 装到 ~/bin（不改系统 PATH）
+ai-arch --version                                                        # 重开终端后即可直接用
 ```
 
-### 场景 3：单文件分发（给别人用）
+### 场景 3：单文件分发（给别人用、离线可用）
 
 ```bash
-node scripts/pack.mjs        # 产出 dist/ai-arch.mjs（~600KB，自包含）+ Windows/POSIX 启动器
+node scripts/pack.mjs        # 产出 dist/ai-arch.mjs（~650KB，自包含）+ Windows/POSIX 启动器
 ```
 
 `dist/ai-arch.mjs` 一个文件就够：内含全部 CLI、7 套模板、skills、schema 与规范快照，**零依赖、无需联网**。
@@ -130,10 +132,30 @@ node scripts/pack.mjs        # 产出 dist/ai-arch.mjs（~600KB，自包含）+ 
 node dist/ai-arch.mjs quickstart --root .     # 或 dist\ai-arch.cmd / ./dist/ai-arch
 ```
 
-### 场景 4：新建项目 / 已懂命令
+### 场景 4：给 AI 工具装插件/扩展（7 种形态，一份源）
 
 ```bash
-node ~/ai-arch/cli/ai-arch.mjs packs                                   # 看有哪些类型
+node scripts/dist.mjs            # 产出全部分发物
+node scripts/dist.mjs --report   # 先看将产出什么、各目标的要求
+```
+
+| 产出 | 目标 |
+|---|---|
+| `dist/agent-kit/` | **跨工具一次装完**：按各家目录约定组织好的整套文件，解包即用 |
+| `dist/skills/` | 任何遵循 Agent Skills 标准的工具 |
+| `dist/plugins/claude-code/` | Claude Code 插件 |
+| `dist/plugins/cursor/` | Cursor 插件（规则 + 路径级规则 + 技能） |
+| `dist/plugins/dsh/` | DeepSeek Harness 插件（注册只读工具） |
+| `dist/instructions/copilot/` | GitHub Copilot 指令包（含 `applyTo` 路径级指令） |
+| `dist/extensions/ai-engineering-arch/` | Gemini CLI 扩展 |
+
+安装方式见各目录内的 `README.md`。
+
+### 场景 5：新建项目 / 已知模板包
+
+```bash
+npx -y github:ugoith/General_AI_Engineering_Architecture packs      # 看有哪些类型
+git clone https://github.com/ugoith/General_AI_Engineering_Architecture.git ~/ai-arch
 node ~/ai-arch/cli/ai-arch.mjs init my-service --pack software-app-medium
 ```
 
