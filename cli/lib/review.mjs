@@ -4,6 +4,7 @@
  * 只做能自动判定的部分（见 docs/system/05-lifecycle.md）：
  *  - 索引漂移：文件 hash 变化但摘要未更新、或索引缺失、文件已删除
  *  - 决策缺失：命中 impact-map 规则但没有 ADR 记录
+ *  - 注册表漂移：契约（实体）被改但注册表未同步 —— 注册表的 hash 与索引对账
  *  - 文档漂移：文档中引用的代码路径不存在
  *  - 令牌预算：AGENTS.md / constitution.md 超出上限
  */
@@ -14,6 +15,7 @@ import { estimateTokens } from './report.mjs';
 import { exists, isDir, isFile, normalizeRel, readJsonSafe, walk } from './fsx.mjs';
 import { scanProject, loadIndex } from './indexer.mjs';
 import { PACK_LIMITS, CONTEXT_TOKEN_BUDGETS } from './limits.mjs';
+import { reconcileRegistry } from './registry.mjs';
 
 export const TOKEN_BUDGETS = CONTEXT_TOKEN_BUDGETS;
 
@@ -75,11 +77,17 @@ export function reviewDrift(projectRoot, opts = {}) {
   // 决策缺失：impact-map 规则 vs decisions 目录
   findings.push(...reviewDecisions(projectRoot, current));
 
+  // 注册表 × 索引 对账：检出"契约被改但注册表未同步"这类静默漂移
+  const reg = reconcileRegistry(projectRoot, { limit: 8 });
+  findings.push(...reg.findings);
+
   // 文档引用漂移
   findings.push(...reviewDocLinks(projectRoot));
 
   const summary = summarizeFindings(findings);
-  return { findings, summary, strictFailed: strict && summary.error + summary.warn > 0 };
+  return {
+    findings, summary, registry: reg.summary, strictFailed: strict && summary.error + summary.warn > 0,
+  };
 }
 
 function reviewDecisions(projectRoot, current) {

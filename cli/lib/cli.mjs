@@ -31,6 +31,7 @@ import {
 import {
   loadRules, addRule, auditRules, rulesDigest, nextRuleId,
 } from './rules.mjs';
+import { auditRegistry, reconcileRegistry } from './registry.mjs';
 
 const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
 
@@ -45,7 +46,8 @@ const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
   ai-arch scale [--gaps]                    评估项目规模等级并列出欠账
   ai-arch patterns [--level S|M|L|XL] [--problem <关键词>]  设计模式选择矩阵
   ai-arch skill <list|show <id>|add <id>>   管理项目内的任务知识（skills）
-  ai-arch rules <list|add|audit>            项目规则：新增约束必须先入库并传播（改代码之前）
+  ai-arch rules <list|add|audit>            项目规则：新增约束必须先入库并传播（改代码前先做）
+  ai-arch registry <audit|suggest>          实体注册表：契约的不变量/签名/owner，以及与索引的对账
   ai-arch facts [--refresh]                 项目事实与可用能力（引擎版本、编辑器能力等）
   ai-arch doctor                            项目健康检查
   ai-arch packs                             列出可用模板包
@@ -62,7 +64,7 @@ const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
   -h, --help  帮助
 `;
 
-const PROJECT_COMMANDS = new Set(['index', 'task', 'review', 'scale', 'skill', 'doctor', 'upgrade', 'patterns', 'rules', 'facts']);
+const PROJECT_COMMANDS = new Set(['index', 'task', 'review', 'scale', 'skill', 'doctor', 'upgrade', 'patterns', 'rules', 'facts', 'registry']);
 
 /**
  * 命令自身的选项名：只跳过 kebab→camel 归一化，**仍然原样保留**。
@@ -101,6 +103,7 @@ export async function main(argv) {
     if (command === 'install-shim') return cmdInstallShim(flags);
     if (command === 'quickstart') return cmdQuickstart(args, flags);
     if (command === 'rules') return cmdRules(args, flags);
+    if (command === 'registry') return cmdRegistry(args, flags);
     if (command === 'facts') return cmdFacts(args, flags);
     if (command === 'patterns') return cmdPatterns(flags);
     if (PROJECT_COMMANDS.has(command)) return cmdProject(command, args, flags);
@@ -507,6 +510,102 @@ function propagateRule(root, rule) {
   });
   writeJson(file, map);
   return { added: true, trigger };
+}
+
+/* ----------------------------------------------------------- registry */
+
+/**
+ * `registry`：实体注册表（契约层）的校验与候选推荐。
+ *
+ * 为什么单独做一条命令：注册表**不是文件清单**——文件清单是索引的职责。
+ * 它记录的是索引给不出的东西：契约的**不变量**（改它时必须保持什么）、签名、owner。
+ * 两者结合才能检出"契约被改但注册表未同步"的静默漂移（见 review --drift）。
+ */
+function cmdRegistry(args, flags) {
+  const root = resolveProject(flags, []);
+  const sub = args[0] ?? 'audit';
+  const isJson = flagBool(flags, 'json');
+
+  if (sub === 'audit') {
+    const audit = auditRegistry(root);
+    const rec = reconcileRegistry(root, { limit: flagNumber(flags, 'limit', 10) });
+    const stale = rec.findings.filter((f) => f.code === 'entity-hash-stale');
+    const missing = rec.findings.filter((f) => f.code === 'entity-file-missing');
+
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ audit, reconciliation: rec }, null, 2) + '\n');
+      return audit.summary.errors > 0 ? 1 : 0;
+    }
+    if (!audit.present) {
+      process.stdout.write('尚未建立实体注册表（.ai/registry.json）。\n\n');
+      process.stdout.write('它不是文件清单（那是索引的职责），而是**契约清单**：\n');
+      process.stdout.write('  登记"改它时必须保持什么"（invariants）、签名（signature）、负责人（owner）。\n');
+      process.stdout.write('没有 hash 就无法检出"契约被改但注册表未同步"的漂移。\n\n');
+      process.stdout.write('先跑 `ai-arch registry suggest` 看哪些文件值得优先登记。\n');
+      return 0;
+    }
+    process.stdout.write(`实体注册表：共 ${audit.summary.total} 条`);
+    const kinds = Object.entries(audit.summary.kinds).map(([k, v]) => `${k} ${v}`).join(' / ');
+    process.stdout.write(kinds ? `（${kinds}）\n\n` : '\n\n');
+
+    if (audit.issues.length === 0) {
+      process.stdout.write('  结构自检：未发现问题。\n');
+    } else {
+      for (const i of audit.issues) {
+        const icon = i.level === 'error' ? '✗' : '!';
+        process.stdout.write(`  ${icon} [${i.entity}] ${i.message}\n`);
+      }
+      process.stdout.write('\n');
+    }
+    if (stale.length > 0) {
+      process.stdout.write(`  契约漂移 ${stale.length} 处（注册表 hash 与索引不一致）：\n`);
+      for (const f of stale) process.stdout.write(`    ! ${f.target}\n        ${f.message}\n`);
+    }
+    if (missing.length > 0) {
+      process.stdout.write(`  注册表指向的文件不存在 ${missing.length} 处：\n`);
+      for (const f of missing) process.stdout.write(`    ! ${f.target}\n`);
+    }
+    if (audit.summary.withoutInvariants > 0 || audit.summary.withoutHash > 0) {
+      process.stdout.write(`  待补：无 invariants ${audit.summary.withoutInvariants} 条，无 hash ${audit.summary.withoutHash} 条\n`);
+    }
+    process.stdout.write('\n提示：review --drift 会自动带上本项检查，无需单独记忆。\n');
+    return audit.summary.errors > 0 ? 1 : 0;
+  }
+
+  if (sub === 'suggest') {
+    const rec = reconcileRegistry(root, {
+      limit: flagNumber(flags, 'limit', 15),
+      highRiskOnly: !flagBool(flags, 'all'),
+    });
+    const candidates = rec.findings.filter((f) => f.code === 'high-risk-unregistered');
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ candidates, summary: rec.summary }, null, 2) + '\n');
+      return 0;
+    }
+    process.stdout.write(`建议优先登记的候选（${candidates.length} 个，按被依赖数排序）\n\n`);
+    if (candidates.length === 0) {
+      process.stdout.write('  没有候选：要么都已登记，要么该项目的文件风险都不高。\n');
+      return 0;
+    }
+    process.stdout.write('选择标准：**改它会不会出事**。会出事的才登记，不必登记全部文件。\n\n');
+    for (const c of candidates) process.stdout.write(`  · ${c.target}\n      ${c.message}\n`);
+    process.stdout.write('\n登记模板（写入 .ai/registry.json 的 entities 数组）：\n\n');
+    process.stdout.write('```json\n');
+    process.stdout.write('{\n');
+    process.stdout.write('  "kind": "api | data-model | module | class | config | contract | asset",\n');
+    process.stdout.write('  "name": "与代码/文档中一致的符号名",\n');
+    process.stdout.write(`  "file": "${candidates[0].target}",\n`);
+    process.stdout.write('  "signature": "接口或数据结构的摘要",\n');
+    process.stdout.write('  "invariants": ["改它时必须恒成立的断言（一条一句、可判定）"],\n');
+    process.stdout.write('  "owner": "@team",\n');
+    process.stdout.write('  "hash": "该文件在 .ai/index/files.json 里的 hash 前 10 位"\n');
+    process.stdout.write('}\n```\n');
+    process.stdout.write('\n为什么必须填 hash：它让 review --drift 能检出"契约被改但注册表未同步"，\n');
+    process.stdout.write('否则后续 AI 会拿旧的不变量做判断，而这正是最难发现的漂移。\n');
+    return 0;
+  }
+
+  throw new Error(`未知子命令 "${sub}"。用法：ai-arch registry <audit|suggest>`);
 }
 
 /* ----------------------------------------------------------- facts */

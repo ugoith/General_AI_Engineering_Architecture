@@ -47,6 +47,7 @@
 | `skill list\|show\|add` | 管理项目内任务知识 | `.ai/skills/<id>/` |
 | `rules <list\|add\|audit>` | 项目规则：新增约束必须先入库并传播 | `.ai/rules.json` |
 | `facts [refresh]` | 项目事实与可用能力（引擎版本、编辑器能力） | `.ai/project-facts.json` |
+| `registry audit\|suggest` | 实体注册表（契约层）校验 + 值得登记的候选 | stdout / 退出码 |
 | `doctor` | 项目健康检查 | stdout / 退出码 |
 | `packs` | 列出可用模板包 | stdout / `--json` |
 | `upgrade` | 同步框架文件到当前版本 | 四态报告；`--apply` 生效 |
@@ -98,6 +99,31 @@ ai-arch facts refresh    # 重新探测（改引擎版本 / 启用插件后）
 **这个区分是架构性的**：MCP 让 agent **驱动编辑器**，不等于能**读仓库里的资产**。因此 `.ai/index/asset-index.md` 仍然必要——它离线可读、可入库、可跨会话、不依赖编辑器状态。但"绝不整读资产"这条指导的**替代路径变了**：以前只能"请人在编辑器里看"，5.8+ 项目现在可以让 agent 通过 MCP 查。
 
 `doctor` 会检查记录的事实是否与实测一致（引擎版本变了报 `facts-stale`），任务包会带上能力结论，避免 AI 用过期前提做判断。
+
+## registry：契约层，索引给不出的那一半
+
+**索引回答"文件在不在、内容变没变"；注册表回答"这个契约的语义是什么、什么必须恒成立"。** 两者职责不重叠，缺了后者就检不出**契约静默漂移**。
+
+```bash
+ai-arch registry audit      # 结构自检 + 与索引对账（默认子命令）
+ai-arch registry suggest    # 列出值得优先登记的高风险 / 被多方依赖文件
+```
+
+`.ai/registry.json` 的每条实体：
+
+| 字段 | 必填 | 作用 |
+|---|---|---|
+| `name` / `kind` | 是 | 稳定标识；`kind` ∈ `data-model`/`api`/`module`/`class`/`config`/`contract`/`asset` |
+| `file` | 是 | 指向具体文件——没有它就无法与索引对账，漂移检测无从谈起 |
+| `hash` | 强烈建议 | 索引里该文件 hash 的前 10 位。**没有它就只能靠人记得"改过要同步"** |
+| `invariants` | 强烈建议 | 改它时必须保持什么。这是注册表存在的理由；只写名字等于没登记 |
+| `signature` / `owner` | 否 | 对外签名、负责人 |
+
+**为什么要记 hash**：注册表说实体 X 在 F、hash 为 H，而索引里 F 的 hash 已是 H′——机械可判定地说明"契约被改但注册表没同步"，后续 AI 会继续拿旧不变量做判断。这是 `review --drift` 的 `entity-hash-stale`（见 `docs/system/05-lifecycle.md` 第三节）。
+
+**判定不了的条目等于没有条目**（与规则集同一标准）：缺 `invariants`、不变量写成"尽量合理"、缺 `hash`，都会被 `registry audit` 指出来。
+
+**注册表为空不是错误，是欠账**：`registry audit` 在注册表为空时会以 info 报 `registry-empty` 并附上候选清单，避免这一层建了却永远不被用起来。
 
 ## 项目类型自动识别（`install` / `quickstart`）
 

@@ -10,6 +10,7 @@ import { PACK_LIMITS, DEFAULT_TASK_BUDGET } from './limits.mjs';
 import { loadIndex } from './indexer.mjs';
 import { auditRules } from './rules.mjs';
 import { detectFacts } from './facts.mjs';
+import { auditRegistry, reconcileRegistry } from './registry.mjs';
 
 const REQUIRED = [
   { path: 'AGENTS.md', why: 'AI 入口，缺失等于每次任务都要重新摸索项目' },
@@ -85,6 +86,34 @@ export function doctor(projectRoot) {
       const unavail = (fresh.capabilities ?? []).filter((c) => !c.available).map((c) => c.id);
       push('ok', 'facts', '.ai/project-facts.json',
         `引擎 ${freshEngine ?? '未检测'}；可用能力 ${avail.length > 0 ? avail.join('、') : '无'}${unavail.length > 0 ? `；不可用 ${unavail.join('、')}` : ''}`);
+    }
+  }
+
+  // 实体注册表：契约层（不变量/签名/owner），与索引对账才能发现契约漂移
+  const regAudit = auditRegistry(projectRoot);
+  if (!regAudit.present) {
+    push('info', 'registry-missing', '.ai/registry.json',
+      '尚无实体注册表：索引只能答"文件变没变"，答不了"改它时必须保持什么"',
+      'node .ai/bin/ai-arch.mjs registry suggest');
+  } else if (regAudit.summary.errors > 0) {
+    push('error', 'registry-invalid', '.ai/registry.json',
+      `${regAudit.summary.errors} 条实体有结构错误：${regAudit.issues.find((i) => i.level === 'error')?.message}`,
+      'node .ai/bin/ai-arch.mjs registry audit');
+  } else if (regAudit.summary.total === 0) {
+    push('info', 'registry-empty', '.ai/registry.json',
+      '注册表为空：它不是文件清单（那是索引的职责），而是契约清单',
+      'node .ai/bin/ai-arch.mjs registry suggest   # 看哪些文件值得优先登记');
+  } else {
+    const rec = reconcileRegistry(projectRoot, { limit: 0 });
+    if (rec.summary.stale > 0 || rec.summary.missing > 0) {
+      push('warn', 'registry-drift', '.ai/registry.json',
+        `契约漂移：${rec.summary.stale} 条 hash 过期、${rec.summary.missing} 条指向的文件不存在`
+        + '（后续 AI 会据此使用旧的不变量做判断）',
+        'node .ai/bin/ai-arch.mjs registry audit');
+    } else {
+      const gaps = regAudit.summary.withoutInvariants + regAudit.summary.withoutHash;
+      push(gaps > 0 ? 'warn' : 'ok', 'registry', '.ai/registry.json',
+        `${regAudit.summary.total} 条实体，其中 ${regAudit.summary.errors} 错误 / ${gaps} 条待补（缺 invariants 或缺 hash）`);
     }
   }
 

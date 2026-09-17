@@ -655,6 +655,70 @@ async function extraTests() {
     fs.rmSync(multi, { recursive: true, force: true });
     pass();
 
+    begin('行为：registry——契约漂移必须被机械检出');
+    // 这一层补的是"验证"维度的缺口：索引只能答"文件变没变"，
+    // 注册表记录"改它时必须保持什么"，两者用 hash 对账才能发现"契约被改但注册表未同步"。
+    const regRoot = tmpDir('registry');
+    fs.mkdirSync(path.join(regRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(regRoot, 'main.mjs'), 'export const x = 1;\n', 'utf8');
+    await run(['install', regRoot, '--pack', 'software-cli-small']);
+    const contractPath = path.join(regRoot, 'src', 'session.mjs');
+    const contractV1 = 'export function createSession(userId) { return { userId, expiresAt: 0 }; }\n';
+    fs.writeFileSync(contractPath, contractV1, 'utf8');
+    await prun(regRoot, ['index']);
+
+    const idxReg = loadIndex(regRoot);
+    const cEntry = idxReg.files.find((f) => f.path === 'src/session.mjs');
+    assert(cEntry, '前置：契约文件已进索引');
+    const regFile = path.join(regRoot, '.ai', 'registry.json');
+    const regData = readJsonSafe(regFile, null);
+    assert(regData, '前置：registry.json 存在');
+    regData.entities = [{
+      kind: 'api',
+      name: 'createSession',
+      file: 'src/session.mjs',
+      signature: 'createSession(userId): Session',
+      invariants: ['expiresAt 必须是 UTC 毫秒时间戳', 'userId 不得为空'],
+      owner: '@team-auth',
+      hash: cEntry.hash.slice(0, 10),
+    }];
+    fs.writeFileSync(regFile, JSON.stringify(regData, null, 2), 'utf8');
+
+    // A) 未改契约 → 不应误报
+    let regDrift = JSON.parse((await prun(regRoot, ['review', '--drift', '--json'])).stdout);
+    assert(regDrift.findings.filter((f) => f.code === 'entity-hash-stale').length === 0,
+      '未改契约时误报了 entity-hash-stale');
+    assert(regDrift.registry && regDrift.registry.checked === 1, 'review 未带上注册表对账汇总');
+
+    // B) 改了契约但没更新注册表 → 必须报出
+    fs.writeFileSync(contractPath, 'export function createSession(userId, ttlMs) { return { userId, expiresAt: Date.now() + ttlMs }; }\n', 'utf8');
+    await prun(regRoot, ['index']);
+    regDrift = JSON.parse((await prun(regRoot, ['review', '--drift', '--json'])).stdout);
+    const staleHits = regDrift.findings.filter((f) => f.code === 'entity-hash-stale');
+    assert(staleHits.length === 1, `改契约后未检出漂移（实际 ${staleHits.length} 条）`);
+    assert(staleHits[0].message.includes('注册表未同步'), '漂移说明未点明原因');
+    assert(/[0-9a-f]{10}/.test(staleHits[0].message), '漂移信息未给出新旧 hash');
+
+    // C) 契约文件被搬走 → 必须报文件缺失
+    fs.renameSync(contractPath, path.join(regRoot, 'src', 'session2.mjs'));
+    await prun(regRoot, ['index']);
+    regDrift = JSON.parse((await prun(regRoot, ['review', '--drift', '--json'])).stdout);
+    assert(regDrift.findings.filter((f) => f.code === 'entity-file-missing').length === 1,
+      '契约文件被搬走后未报 entity-file-missing');
+
+    // D) 结构校验：缺 invariants / 缺 hash 必须被指出（判定不了的条目等于没有条目）
+    regData.entities = [{ kind: 'api', name: 'x', file: 'src/session2.mjs' }];
+    fs.writeFileSync(regFile, JSON.stringify(regData, null, 2), 'utf8');
+    const regAudit = JSON.parse((await prun(regRoot, ['registry', 'audit', '--json'])).stdout);
+    const msgs = regAudit.audit.issues.map((i) => i.message).join(' ');
+    assert(/invariants/.test(msgs), '未指出实体缺少 invariants');
+    assert(/hash/.test(msgs), '未指出实体缺少 hash');
+    // E) suggest 在完全未登记时给出候选与模板
+    const suggest = JSON.parse((await prun(regRoot, ['registry', 'suggest', '--json'])).stdout);
+    assert(Array.isArray(suggest.candidates), 'registry suggest 未返回候选数组');
+    fs.rmSync(regRoot, { recursive: true, force: true });
+    pass();
+
     begin('行为：rules——新增约束必须入库、可判定、并自动传播');
     const rulesRoot = tmpDir('rules');
     fs.mkdirSync(path.join(rulesRoot, 'src'), { recursive: true });

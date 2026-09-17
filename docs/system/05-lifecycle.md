@@ -10,6 +10,7 @@
 | **变更时** | 写代码的人/AI | 按影响矩阵同步文档与索引 | 半自动（`review --impact` 给出清单） |
 | **提交前** | 每次提交 | 漂移检测、上下文预算检查 | 全自动（`review --drift`） |
 | **定期** | 里程碑/季度/规模变化 | 架构评审，产出 ADR 或整改清单 | 半自动（`review --drift` + 评审清单） |
+| **契约变更时** | 改到已登记实体 | 核对不变量、更新注册表与 ADR | 半自动（`review --drift` 报 `entity-hash-stale`） |
 
 没有这三个时机，任何"有空再整理"的约定都会失效。这是设计上的取舍，理由见 `docs/04-design-notes.md` 第 5 节。
 
@@ -56,6 +57,13 @@ node .ai/bin/ai-arch.mjs review --drift --strict # 有 error/warn 则退出码 1
 | `context-file-missing` | L0/L1 缺失 | error |
 | `doc-link-missing` | 文档里引用的代码路径不存在 | info |
 | `decisions-empty` | 项目已有变更但没有任何 ADR | info |
+| `entity-hash-stale` | **契约漂移**：注册表记录的 hash 与索引不一致（契约被改，注册表未同步） | warn |
+| `entity-file-missing` | 注册表指向的文件不存在（契约被搬运/删除） | warn |
+| `entity-unindexed` | 登记路径是目录或不在索引中，无法用 hash 对账 | info |
+| `high-risk-unregistered` | 高风险 / 被多方依赖的文件尚未登记（工作队列，非错误） | info |
+| `registry-empty` | 注册表尚无任何实体（这一层建了没被用起来） | info |
+
+**为什么单列"契约漂移"**：前 8 项只回答"文件在不在、内容变没变"。`entity-hash-stale` 回答的是更贵的问题——**这个契约的语义变了吗**。摘要过期最多让你多读一次源码；契约漂移会让你**拿旧的不变量去做判断**，而且不会有任何报错。这正是 `docs/04-design-notes.md` §9.2 说的、主流"spec → 可评审产物"路线刻意留白的部分。
 
 建议接到 git 钩子（框架不自动安装钩子，避免污染用户仓库）：
 
@@ -80,10 +88,13 @@ node .ai/bin/ai-arch.mjs review --drift --strict || exit 1
 
 ```bash
 node .ai/bin/ai-arch.mjs scale --gaps        # 1. 规模与欠账
-node .ai/bin/ai-arch.mjs review --drift      # 2. 机械漂移
-node .ai/bin/ai-arch.mjs review --decisions  # 3. 决策历史
-node .ai/bin/ai-arch.mjs task "架构评审：<范围>" --budget 20000   # 4. 生成评审用上下文包
+node .ai/bin/ai-arch.mjs review --drift      # 2. 机械漂移（含契约漂移）
+node .ai/bin/ai-arch.mjs registry audit      # 3. 契约层：不变量是否还成立
+node .ai/bin/ai-arch.mjs review --decisions  # 4. 决策历史
+node .ai/bin/ai-arch.mjs task "架构评审：<范围>" --budget 20000   # 5. 生成评审用上下文包
 ```
+
+第 3 步问的是前两步问不出的问题：**这次改动的契约，当初声明必须恒成立的那些条件还成立吗？** 若不成立，正确动作是改不变量并写 ADR，而不是悄悄改代码。
 
 然后按 `.ai/skills/code-review/SKILL.md` 的"架构评审清单"逐条过，**只产出两类结论**：
 

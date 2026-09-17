@@ -43,7 +43,7 @@
 | 文件 | 回答的问题 | 谁写 | 校验方式 |
 |---|---|---|---|
 | `.ai/index/files.json` | 每个文件是什么、改过没有、谁依赖它 | CLI（hash/依赖）+ AI（摘要） | `index --apply` 的 hash 校验 + `review --drift` |
-| `.ai/registry.json` | 关键实体（数据模型/接口/模块/契约）的签名与不变量 | 人 + AI | `review --drift`（与架构文档对账） |
+| `.ai/registry.json` | 关键实体（数据模型/接口/模块/契约）的签名与不变量 | 人 + AI | `registry audit` + `review --drift` 的 hash 对账（`entity-hash-stale`） |
 | `.ai/index/impact-map.json` | 改了 X 必须同步改什么 | 人 | `review --impact` 输出中使用；新增规则由评审驱动 |
 
 `registry.json` 的实体格式：
