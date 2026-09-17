@@ -25,6 +25,9 @@
 ## UE 专项硬约束（违反即返工）
 
 1. **绝不整读 `.uasset` / `.umap`**（二进制）：理解资产只能靠 `{{aiDir}}/index/asset-index.md` 摘要 + `Content/README.md` 命名约定 + 在编辑器里实际打开确认。
+   **例外通道（随引擎能力变化，见 `{{aiDir}}/project-facts.json`）**：
+   - 引擎 **≥ 5.8** 且启用 **Unreal MCP**（插件标识 `ModelContextProtocol`，需同时启用 AllToolsets）：agent 可在**编辑器运行时**调用工具查询场景/Actor/材质实例/Slate 控件、跑自动化测试、spawn actor。这是**驱动编辑器**，**不是**读取 `.uasset` 文件——它要求编辑器在跑、状态为 Experimental、结果不入库，因此**资产的可共享知识仍必须写进 asset-index**。
+   - 想确认本项目到底能不能用：`node {{aiDir}}/bin/ai-arch.mjs facts`（按引擎版本与已启用插件判定，并给出边界说明）。
 2. **改头文件 / 模块 / `.Build.cs` 后必须重新生成项目文件再重编译**；只改 `.cpp` 实现且签名未变时可增量编译（命令见 `{{docsDir}}/runbooks/build-and-verify.md` 第 1 节）。
 3. **`Binaries/`、`Intermediate/`、`Saved/`、`DerivedDataCache/`、`.vs/` 不入库**；它们出现在变更列表里说明 `.gitignore` 被破坏。
 4. **GC 规则**：持有 `UObject` 的成员必须有 `UPROPERTY()`，否则会被 GC 回收成野指针（最难查的一类崩溃）；非拥有引用用 `TWeakObjectPtr<>`。
@@ -32,6 +35,8 @@
 6. **跨模块只 include `Public/` 下的头文件**；外部引用 `Private/` 视为模块边界破坏，必须先写 ADR。
 7. **数值不写死在 C++**：可调数值放 DataAsset / DataTable，否则每次调参都要重编译。
 8. **新增 Plugin / 第三方库 / 模块依赖必须先写 ADR**，除非宪法"已批准依赖"一节已列明。
+9. **C++ / 蓝图 / 资产的归属必须先对齐再动手**：新内容属于哪一侧按 `{{docsDir}}/architecture/bp-vs-cpp.md` 判定；命中该文档"必须停下来问"的触发条件时**先问用户**，并把结论同时记进 `.ai/rules.json` 与 ADR——只口头对齐等于没对齐。
+10. **新的长期约束必须先入库再写代码**：`node {{aiDir}}/bin/ai-arch.mjs rules add "<可判定的规则>" --category <类别> --enforcement <tool|review|manual> --check "<怎么判定>"`。判定不了的规则等于没有规则。
 
 {{> SHARED:context-discipline}}
 
@@ -47,6 +52,9 @@
 | 改配置（`Config/*.ini` 核心项） | `Config/README.md` 第 2 节 | 属契约变更 → 先写 ADR，再跑打包冒烟 |
 | 打包 / Cook 失败 | `{{docsDir}}/runbooks/build-and-verify.md` | 按分诊表排查，不要靠猜 |
 | 改模块边界 / 数据契约 | `{{aiDir}}/index/impact-map.json` | 先写 ADR，再按 `mustUpdate` 逐条同步 |
+| 判断这段逻辑写 C++ 还是蓝图 | `{{docsDir}}/architecture/bp-vs-cpp.md` 第 2 节判定顺序 | 命中第 4 节触发条件 → **先问用户**，结论记进 rules.json + ADR |
+| 用户提出新的代码风格/工程约束 | `{{aiDir}}/rules.json` | `node {{aiDir}}/bin/ai-arch.mjs rules add "..." --category style --enforcement <tool\|review> --check "<怎么判定>"`，再按输出的传播清单逐条落实 |
+| 想知道这个引擎版本能用哪些 AI 能力 | `{{aiDir}}/project-facts.json` | `node {{aiDir}}/bin/ai-arch.mjs facts`（按版本与插件判定，含边界说明） |
 
 ## UE 索引与摘要纪律
 

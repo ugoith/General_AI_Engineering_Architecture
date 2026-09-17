@@ -45,9 +45,59 @@
 | `scale --gaps` | 列出当前等级要求的缺失文件 | stdout |
 | `patterns` | 设计模式选择矩阵 | stdout / `--json` |
 | `skill list\|show\|add` | 管理项目内任务知识 | `.ai/skills/<id>/` |
+| `rules <list\|add\|audit>` | 项目规则：新增约束必须先入库并传播 | `.ai/rules.json` |
+| `facts [refresh]` | 项目事实与可用能力（引擎版本、编辑器能力） | `.ai/project-facts.json` |
 | `doctor` | 项目健康检查 | stdout / 退出码 |
 | `packs` | 列出可用模板包 | stdout / `--json` |
-| `upgrade` | 同步框架文件到当前版本 | 三态报告；`--apply` 生效 |
+| `upgrade` | 同步框架文件到当前版本 | 四态报告；`--apply` 生效 |
+
+## rules：新增约束的落地流程（入库 → 传播 → 验收）
+
+开发中用户随时会加约束（"if 嵌套别太深""日志必须带 requestId"）。**只把这句话写进某处文档，它必然失效**：agent 下次读不到、评审时没人看、也没法判定是否遵守。因此新增约束走固定流程：
+
+```bash
+ai-arch rules add "if 嵌套深度不超过 3 层" \
+  --category style --enforcement review \
+  --check "评审时数嵌套层数，超过则要求提前 return 或抽函数" \
+  --rationale "降低认知负担，if 深嵌套是缺陷高发区"
+```
+
+| 环节 | 机制 |
+|---|---|
+| **入库** | 写入 `.ai/rules.json`，分配稳定 ID（`R-001`…）；引用时只引 ID（对应"稳定标识"原则） |
+| **传播** | CLI 输出精确的传播清单（宪法红线 / 影响矩阵 / 评审清单 / ADR / lint 配置），并**自动**写入 `.ai/index/impact-map.json`，使改动相关文件时 `review --impact` 会提醒复查 |
+| **验收** | `enforcement` 三选一：`tool`（工具自动判定，最可靠，必须给可执行命令）/ `review`（评审时人工判定）/ `manual`（只能靠人，应尽量避免）；`--check` **必填** |
+
+**两条硬规则**（CLI 强制）：
+
+1. **判定不了的规则等于没有规则**——`statement` 含"整洁/合理/优雅/尽量"等不可判定措辞且无数字或禁止项时直接拒绝入库。
+2. **新增约束必须先入库再改代码**——顺序反了，规则就只存在于这次对话里。
+
+**存量违规迁移**：规则的 `debt` 字段记录已知违规清单；迁移期允许存在（`doctor` 报 info 级 `rules-debt`），但要有清账计划，`rules audit` 汇总。
+
+**为什么规则会出现在任务包里**：任务包正文渲染 `## 1.5 项目规则` 小节并逐条列出，并带上 `rules.json` 的内容 hash。hash 变化即表示规则被改过，**下一次任务必须重读**——这是"规则在下次开工真的被看到"的唯一保证。
+
+## facts：项目事实与可用能力
+
+**新能力会改变"什么做法可行"**，所以这些事实必须落盘、可查询、可随探测更新，而不是散落在文档里靠人记。
+
+```bash
+ai-arch facts            # 查看（不存在则自动探测一次）
+ai-arch facts refresh    # 重新探测（改引擎版本 / 启用插件后）
+```
+
+已知能力（声明式，见 `cli/lib/facts.mjs` 的 `CAPABILITIES`）：
+
+| 能力 | 要求 | 能做什么 | **不能**做什么 |
+|---|---|---|---|
+| `unreal-mcp`（官方 Epic） | 引擎 **≥ 5.8** + `.uproject` 启用 `ModelContextProtocol`（需同时启用 AllToolsets） | 编辑器运行时调用工具：spawn/检查 actor、配置灯光、创建材质实例、检查 Slate 控件、跑自动化测试 | **不是**读取 `.uasset` 的通道；必须编辑器在跑；状态 Experimental（API 会变）；产出不入库 |
+| `third-party-unreal-mcp` | 社区项目（非 Epic），使用前先写 ADR | 宣称低 token 蓝图读取与持久项目索引 | 非官方、需评估可持续性；其产物不能替代本项目的资产索引约定 |
+
+官方文档：[Unreal MCP in Unreal Editor](https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-mcp-in-unreal-editor)。
+
+**这个区分是架构性的**：MCP 让 agent **驱动编辑器**，不等于能**读仓库里的资产**。因此 `.ai/index/asset-index.md` 仍然必要——它离线可读、可入库、可跨会话、不依赖编辑器状态。但"绝不整读资产"这条指导的**替代路径变了**：以前只能"请人在编辑器里看"，5.8+ 项目现在可以让 agent 通过 MCP 查。
+
+`doctor` 会检查记录的事实是否与实测一致（引擎版本变了报 `facts-stale`），任务包会带上能力结论，避免 AI 用过期前提做判断。
 
 ## 项目类型自动识别（`install` / `quickstart`）
 

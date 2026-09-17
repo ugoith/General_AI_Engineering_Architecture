@@ -36,6 +36,7 @@ const PACKS = [
 const { main } = await import(pathToFileURL(path.join(cliLib, 'cli.mjs')).href);
 const { sha256, isFile, readJsonSafe, walk, normalizeRel } = await import(pathToFileURL(path.join(cliLib, 'fsx.mjs')).href);
 const { loadIndex } = await import(pathToFileURL(path.join(cliLib, 'indexer.mjs')).href);
+const { PACK_LIMITS } = await import(pathToFileURL(path.join(cliLib, 'limits.mjs')).href);
 
 const argv = process.argv.slice(2);
 const keep = argv.includes('--keep');
@@ -128,7 +129,8 @@ for (const packId of PACKS) {
     assert(meta?.packId === packId, `framework.json 的 packId=${meta?.packId}，期望 ${packId}`);
     assert(Object.keys(meta.managed ?? {}).length > 5, 'managed 记录过少');
     const agentsLines = assertFile(root, 'AGENTS.md').replace(/\r\n/g, '\n').split('\n').length;
-    assert(agentsLines <= 130, `AGENTS.md 有 ${agentsLines} 行，超过 130 行上限`);
+    assert(agentsLines <= PACK_LIMITS['AGENTS.md'],
+      `AGENTS.md 有 ${agentsLines} 行，超过 ${PACK_LIMITS['AGENTS.md']} 行上限`);
     // 渲染残留检查。
     // 跳过两类**框架自身内容的原样快照**（它们包含 `{{...}}` 语法示例，属预期内容）：
     //   `.ai/framework/**` —— 框架规范与模板快照（内含模板语法示例）
@@ -560,14 +562,119 @@ async function extraTests() {
     fs.rmSync(instRoot, { recursive: true, force: true });
     pass();
 
-    begin('行为：无法识别类型时不猜（要求 --pack）');
+    begin('行为：rules——新增约束必须入库、可判定、并自动传播');
+    const rulesRoot = tmpDir('rules');
+    fs.mkdirSync(path.join(rulesRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(rulesRoot, 'main.mjs'), 'export const x = 1;\n', 'utf8');
+    await run(['install', rulesRoot, '--pack', 'software-cli-small']);
+
+    // 空规则集：应给出可复制的 add 命令
+    const emptyList = await prun(rulesRoot, ['rules', 'list']);
+    assert(emptyList.stdout.includes('rules add'), '空规则集时未给出新增命令示例');
+
+    // 不可判定的规则必须被拒（"判定不了的规则等于没有规则"）
+    const ruleBad = await prun(rulesRoot, ['rules', 'add', '代码要整洁优雅', '--check', '看感觉'], { expectCode: null });
+    assert(ruleBad.code === 1, `不可判定的规则应被拒绝，实际退出码 ${ruleBad.code}`);
+    assert(ruleBad.stderr.includes('不可判定'), '未说明拒绝原因（不可判定）');
+
+    // 缺少 check 必须被拒
+    const ruleNoCheck = await prun(rulesRoot, ['rules', 'add', 'if 嵌套深度不超过 3 层'], { expectCode: null });
+    assert(ruleNoCheck.code === 1, `缺少 --check 应被拒绝，实际 ${ruleNoCheck.code}`);
+    assert(ruleNoCheck.stderr.includes('check'), '未说明缺少 check');
+
+    // 合规规则：入库 + 传播清单 + 自动写影响矩阵
+    const ruleAdded = await prun(rulesRoot, [
+      'rules', 'add', 'if 嵌套深度不超过 3 层',
+      '--category', 'style', '--enforcement', 'review',
+      '--check', '评审时数嵌套层数，超过则要求提前 return 或抽函数',
+      '--rationale', '降低认知负担',
+    ]);
+    assert(ruleAdded.stdout.includes('R-001'), '未分配稳定规则 ID');
+    assert(ruleAdded.stdout.includes('传播'), '未输出传播清单');
+    assert(ruleAdded.stdout.includes('constitution.md'), '传播清单未包含宪法（规则必须在每会话必读处可见）');
+    assert(ruleAdded.stdout.includes('code-review'), 'review 类规则未进入评审清单');
+    const rulesJson = readJsonSafe(path.join(rulesRoot, '.ai', 'rules.json'), null);
+    assert(rulesJson?.rules?.length === 1, '规则未写入 .ai/rules.json');
+    const impactMap = readJsonSafe(path.join(rulesRoot, '.ai', 'index', 'impact-map.json'), null);
+    assert(impactMap.rules.some((r) => r.trigger === 'r-001-rule-check'),
+      '规则未自动写入影响矩阵（改动相关文件时不会被复查）');
+
+    // rules audit 应通过
+    const rulesAudit = JSON.parse((await prun(rulesRoot, ['rules', 'audit', '--json'])).stdout);
+    assert(rulesAudit.summary.total === 1 && rulesAudit.issues.filter((i) => i.level === 'error').length === 0,
+      `rules audit 异常：${JSON.stringify(rulesAudit.summary)}`);
+
+    // 规则必须出现在任务包里（否则下次开工读不到）
+    await prun(rulesRoot, ['index']);
+    const rulesTask = JSON.parse((await prun(rulesRoot, ['task', '改 main 逻辑', '--json'])).stdout);
+    assert(rulesTask.rules?.present === true, '任务包未带上规则集');
+    assert(rulesTask.rules.count === 1, `任务包规则数异常：${rulesTask.rules.count}`);
+    assert(Array.isArray(rulesTask.rules.rules) && rulesTask.rules.rules[0].id === 'R-001', '任务包未列出规则明细');
+    const taskMd = fs.readFileSync(path.join(rulesRoot, '.ai', 'tasks', `${rulesTask.id}.md`), 'utf8');
+    assert(taskMd.includes('## 1.5 项目规则'), '任务包正文未渲染规则小节');
+    assert(taskMd.includes('R-001'), '任务包正文未逐条列出规则');
+    assert(taskMd.includes('if 嵌套深度不超过 3 层'), '任务包正文未包含规则内容');
+    fs.rmSync(rulesRoot, { recursive: true, force: true });
+    pass();
+
+    begin('行为：facts——能力判定随引擎版本变化，且明确边界');
+    const factsRoot = tmpDir('facts');
+    // UE 5.7：Unreal MCP 需要 5.8 → 应判定不可用
+    fs.writeFileSync(path.join(factsRoot, 'Old.uproject'),
+      JSON.stringify({ FileVersion: 3, EngineAssociation: '5.7', Modules: [{ Name: 'Old' }] }), 'utf8');
+    fs.mkdirSync(path.join(factsRoot, 'Source', 'Old'), { recursive: true });
+    fs.writeFileSync(path.join(factsRoot, 'Source', 'Old', 'Old.Build.cs'), '// b\n', 'utf8');
+    await run(['install', factsRoot, '--pack', 'game-unreal', '--name', 'Old']);
+    const facts57 = JSON.parse((await run(['facts', '--root', factsRoot, '--json'])).stdout);
+    const mcp57 = facts57.capabilities.find((c) => c.id === 'unreal-mcp');
+    assert(mcp57, '未探测到 unreal-mcp 能力条目');
+    assert(mcp57.available === false, 'UE 5.7 不应判定 Unreal MCP 可用');
+    assert(mcp57.reasons.join(' ').includes('5.8'), '未说明版本要求');
+    assert(String(mcp57.whatItDoesNot).includes('不是'), '未声明该能力的边界（不能读 .uasset）');
+
+    // 升级到 5.8 并启用插件 → 应变为可用
+    fs.writeFileSync(path.join(factsRoot, 'Old.uproject'), JSON.stringify({
+      FileVersion: 3,
+      EngineAssociation: '5.8',
+      Modules: [{ Name: 'Old' }],
+      Plugins: [{ Name: 'ModelContextProtocol', Enabled: true }],
+    }), 'utf8');
+    await run(['facts', 'refresh', '--root', factsRoot]);
+    const facts58 = JSON.parse((await run(['facts', '--root', factsRoot, '--json'])).stdout);
+    const mcp58 = facts58.capabilities.find((c) => c.id === 'unreal-mcp');
+    assert(mcp58.available === true, `UE 5.8 且启用插件后应判定可用，实际理由：${mcp58.reasons.join('；')}`);
+    // 任务包必须带上能力结论
+    await run(['index', '--root', factsRoot]);
+    const factsTask = JSON.parse((await prun(factsRoot, ['task', '改移动逻辑', '--json'])).stdout);
+    assert(factsTask.facts?.engine?.version === '5.8', '任务包未带上引擎版本');
+    assert(factsTask.facts.capabilities.some((c) => c.id === 'unreal-mcp' && c.available),
+      '任务包未带上能力可用性结论');
+    fs.rmSync(factsRoot, { recursive: true, force: true });
+    pass();
+
+    begin('行为：类型识别——无标记时回落，有互斥证据时拒绝猜');
+    // 情况 A：完全无标记（全新项目）→ 应回落到最小档，而不是失败
     const vague = tmpDir('vague');
     fs.writeFileSync(path.join(vague, 'notes.txt'), 'nothing recognizable\n', 'utf8');
-    const vagueRes = await run(['install', vague], { expectCode: null, quiet: true });
-    assert(vagueRes.code === 1, `无法识别类型时应返回 1，实际 ${vagueRes.code}`);
-    assert(vagueRes.stderr.includes('无法确定项目类型'), '未给出"无法确定类型"的提示');
-    assert(vagueRes.stderr.includes('--pack'), '未提示用 --pack 指定');
+    const fallbackRes = JSON.parse((await run(['install', vague, '--json'])).stdout);
+    assert(fallbackRes.detection.confidence === 'fallback',
+      `无标记项目应回落（confidence=fallback），实际 ${fallbackRes.detection.confidence}`);
+    assert(fallbackRes.detection.packId === 'software-cli-small',
+      `回落档应为最小档，实际 ${fallbackRes.detection.packId}`);
+    assert(fallbackRes.detection.evidence.join(' ').includes('未发现任何项目类型标记'), '回落时未说明原因');
     fs.rmSync(vague, { recursive: true, force: true });
+
+    // 情况 B：两个引擎标记并存（互斥证据）→ 必须拒绝猜并要求 --pack
+    const conflict = tmpDir('conflict');
+    fs.writeFileSync(path.join(conflict, 'Game.uproject'), '{"EngineAssociation":"5.8"}', 'utf8');
+    fs.writeFileSync(path.join(conflict, 'project.godot'), '[application]\n', 'utf8');
+    const conflictRes = await run(['install', conflict], { expectCode: null, quiet: true });
+    assert(conflictRes.code === 1,
+      `存在互斥证据时应返回 1（要求人确认），实际 ${conflictRes.code}`);
+    assert(conflictRes.stderr.includes('无法确定项目类型'), '未给出"无法确定类型"的提示');
+    assert(conflictRes.stderr.includes('--pack'), '未提示用 --pack 指定');
+    assert(conflictRes.stderr.includes('冲突'), '未说明冲突的证据');
+    fs.rmSync(conflict, { recursive: true, force: true });
     pass();
     const empty = tmpDir('empty');
     const res = await run(['index', empty], { expectCode: null, quiet: true });

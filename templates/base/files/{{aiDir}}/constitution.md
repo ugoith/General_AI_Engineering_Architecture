@@ -42,6 +42,19 @@
 4. 不跨模块直接引用内部实现（只走公开接口）；破坏性契约变更必须走下面的流程。
 5. （填写本项目特有的一条红线，例如"离线环境不得发起外部网络请求"）
 
+## 项目规则与事实（新增约束与能力变化的落地位置）
+
+| 你要做的事 | 位置 | 命令 |
+|---|---|---|
+| 用户/团队提出新的代码风格或工程约束 | `{{aiDir}}/rules.json`（拿稳定 ID，再按传播清单落实） | `node {{aiDir}}/bin/ai-arch.mjs rules add "<可判定的规则>" --category <style\|naming\|architecture\|process\|security\|performance\|testing> --enforcement <tool\|review\|manual> --check "<怎么判定>"` |
+| 引擎版本 / 工具链 / 编辑器能力变化 | `{{aiDir}}/project-facts.json` | `node {{aiDir}}/bin/ai-arch.mjs facts refresh` |
+
+**两条硬规则**：
+- **新增约束必须先入库再改代码**——顺序反了，规则就只会存在于这次对话里。
+- **判定不了的规则等于没有规则**：`rules add` 会强制要求 `--check`。`enforcement=tool`（能被工具自动判定）优先，`manual` 应尽量避免。
+
+任务包会自动带上 `rules.json` 的 hash 与 `project-facts.json` 的能力结论，因此规则与能力变化在**下一次开工**时必然可见。
+
 {{> SHARED:scale-gate}}
 
 ## 契约变更流程

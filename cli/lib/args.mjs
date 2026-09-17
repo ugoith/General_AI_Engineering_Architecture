@@ -21,6 +21,8 @@ const VALUED_HINTS = new Set([
   'packageManager', 'runtime', 'language', 'engine', 'unityVersion',
   'ueVersion', 'godotVersion', 'renderPipeline', 'usesBlueprint', 'gdscript',
   'agent', 'format', 'framework', 'bin', 'from',
+  // rules 子命令的选项（漏登记会被当成布尔标志吞掉取值）
+  'statement', 'category', 'enforcement', 'check', 'scope', 'rationale', 'source',
 ]);
 
 export function parseArgs(argv = process.argv.slice(2)) {

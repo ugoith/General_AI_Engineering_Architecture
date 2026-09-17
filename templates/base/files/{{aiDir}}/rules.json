@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "{{date}}",
+  "note": "项目规则集。用户/团队提出的长期约束必须先入库再改代码——顺序反了规则就会漏。用 `node .ai/bin/ai-arch.mjs rules add \"<可判定的规则>\" --category <类别> --enforcement <tool|review|manual> --check \"<怎么判定>\"` 新增。判定不了的规则等于没有规则，因此 check 是必填。",
+  "fieldGuide": {
+    "id": "稳定 ID（R-001…）；引用时只引 ID，不复述正文",
+    "statement": "一句话规则，必须可判定（禁止\"代码要整洁\"这类表述）",
+    "category": "style | naming | architecture | process | security | performance | testing",
+    "enforcement": "tool（有工具自动判定，最可靠）/ review（评审时人工判定）/ manual（只能靠人，应尽量避免）",
+    "check": "tool 类：可复制执行的命令，或规则实现在哪个 lint 配置里；review/manual 类：具体判定步骤",
+    "scope": "适用路径 glob，默认 **（全项目）",
+    "rationale": "为什么需要它——复审时用来判断该规则是否还成立",
+    "debt": "已知存量违规清单（迁移期用；清空表示已全量遵守）"
+  },
+  "rules": []
+}

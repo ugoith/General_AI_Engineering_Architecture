@@ -78,7 +78,12 @@ export function detectPack(root, fileList = [], extra = {}) {
     return { packId: null, confidence: 'low', evidence, candidates, conflict: engineHit.map((c) => c.packId) };
   }
   if (candidates.length === 0) {
-    return { packId: null, confidence: 'low', evidence, candidates: [] };
+    // 完全没有标记：全新项目、纯文档目录、或还没写代码的仓库都会走到这里。
+    // 这**不是冲突**（没有互斥证据），而是"信息不足"——交由调用方决定是否回落到最小档。
+    // 早期实现直接判失败，导致 `install` 在全新项目上完全不可用（真实缺陷）。
+    return {
+      packId: null, confidence: 'low', evidence, candidates: [], reason: 'no-signal',
+    };
   }
   const top = candidates[0];
   const runnerUp = candidates[1]?.score ?? 0;

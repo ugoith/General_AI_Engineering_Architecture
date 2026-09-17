@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "{{date}}",
+  "root": ".",
+  "note": "项目事实与可用能力。因为**新能力会改变\"什么做法可行\"**（例如引擎新版本带来的编辑器 AI 接口），所以这些事实要落盘、可查询、可随探测更新：`node .ai/bin/ai-arch.mjs facts refresh`。任务包会自动带上它，避免 AI 用过时前提做判断。",
+  "engine": null,
+  "capabilities": []
+}

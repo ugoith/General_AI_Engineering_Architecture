@@ -17,6 +17,8 @@ import { estimateTokens } from './report.mjs';
 import { matchesAny, normalizeRel, ensureDir, isFile } from './fsx.mjs';
 import { impactOf } from './neighbors.mjs';
 import { DEFAULT_TASK_BUDGET } from './limits.mjs';
+import { rulesDigest } from './rules.mjs';
+import { loadFacts } from './facts.mjs';
 
 export const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
@@ -248,6 +250,12 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
   const pendingDigest = files.filter((f) => f.digest?.status === 'pending' && f.kind === 'text').length;
   const staleDigest = files.filter((f) => f.digest?.stale).length;
 
+  // 项目规则与项目事实必须随任务包一起给出：
+  // 否则"用户新加的约束"与"当前引擎能力"在下次开工时不会被看到——
+  // 而这两者恰恰最容易被漏掉（它们不在源码里，也不在索引摘要里）。
+  const rules = rulesDigest(projectRoot);
+  const facts = loadFacts(projectRoot);
+
   return {
     schemaVersion: 1,
     id: `${formatDate(now)}-${slug ?? slugify(prompt)}`,
@@ -266,6 +274,19 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
     readList: selected,
     dropped,
     indexHealth: { pendingDigest, staleDigest, totalFiles: files.length },
+    rules,
+    facts: facts
+      ? {
+        engine: facts.engine ?? null,
+        capabilities: (facts.capabilities ?? []).map((c) => ({
+          id: c.id,
+          label: c.label,
+          available: c.available,
+          reasons: c.reasons,
+          whatItDoesNot: c.whatItDoesNot,
+        })),
+      }
+      : null,
     scope: { in: [], out: [] },
     acceptance: [],
   };
@@ -325,6 +346,57 @@ export function renderTaskPackMarkdown(pack) {
     lines.push(`| ${a.level} | \`${a.path}\`${a.exists ? '' : ' ⚠️ 不存在'} | ${a.label} | ${a.hash ?? '-'} | ~${a.tokens} |`);
   }
   lines.push('');
+
+  // 项目规则：必须在正文里逐条列出。规则是"用户提出的约束"，最容易在下次开工时被漏掉。
+  if (pack.rules?.present) {
+    lines.push(`## 1.5 项目规则（\`.ai/rules.json\`，hash ${pack.rules.hash}，共 ${pack.rules.count} 条）`);
+    lines.push('');
+    if (pack.rules.count === 0) {
+      lines.push('_规则集为空。若本次任务产生了新的长期约束，先入库再写代码：_');
+      lines.push('');
+      lines.push('```bash');
+      lines.push('node .ai/bin/ai-arch.mjs rules add "<可判定的规则>" --category <类别> --enforcement <tool|review|manual> --check "<怎么判定>"');
+      lines.push('```');
+    } else {
+      lines.push('**这些是必须遵守的项目约束。判定方式为 tool 的先跑命令；review/manual 的请在交付时逐条自查并说明。**');
+      lines.push('');
+      lines.push('| ID | 规则 | 类别 | 判定方式 | 怎么判定 | 存量违规 |');
+      lines.push('|---|---|---|---|---|---|');
+      for (const r of pack.rules.rules) {
+        lines.push(`| ${r.id} | ${r.statement} | ${r.category} | ${r.enforcement} | ${r.check} | ${r.debt > 0 ? `**${r.debt} 处待迁移**` : '—'} |`);
+      }
+      lines.push('');
+      const scoped = pack.rules.rules.filter((r) => r.scope && r.scope !== '**');
+      if (scoped.length > 0) {
+        lines.push('带范围的规则（仅适用于部分路径）：');
+        for (const r of scoped) lines.push(`- ${r.id}：\`${r.scope}\``);
+        lines.push('');
+      }
+      lines.push('> 规则有变时，本文件的 hash 会随之变化——**下次任务看到 hash 变了就必须重读 `.ai/rules.json`**。');
+    }
+    lines.push('');
+  }
+
+  // 项目事实与能力：影响"哪种做法可行"（例如引擎是否支持编辑器 MCP）
+  const caps = pack.facts?.capabilities ?? [];
+  if (pack.facts?.engine || caps.length > 0) {
+    lines.push('## 1.6 项目事实与可用能力（影响"哪种做法可行"）');
+    lines.push('');
+    if (pack.facts?.engine) {
+      const e = pack.facts.engine;
+      lines.push(`- 引擎：**${e.kind} ${e.version ?? '未知'}**（\`${e.uproject ?? '-'}\`）｜ 模块：${(e.modules ?? []).join('、') || '未声明'}`);
+    }
+    for (const c of caps) {
+      lines.push(`- ${c.available ? '✅' : '❌'} **${c.label}**`);
+      for (const r of c.reasons ?? []) lines.push(`  - ${r}`);
+      if (c.whatItDoesNot) lines.push(`  - ⚠️ 边界：${c.whatItDoesNot}`);
+    }
+    if (caps.length > 0) {
+      lines.push('');
+      lines.push('> 事实会随引擎版本/插件启用变化。更新：`node .ai/bin/ai-arch.mjs facts refresh`');
+    }
+    lines.push('');
+  }
 
   lines.push('## 2. 读取清单（按优先级）');
   lines.push('');

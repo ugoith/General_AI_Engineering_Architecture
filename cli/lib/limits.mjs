@@ -7,10 +7,18 @@
  *  - taskBudget：docs/system/04-context-discipline.md「任务包默认预算」
  */
 
-/** 静态上下文文件的行数与 token 上限（key 为项目内相对路径）。 */
+/**
+ * 静态上下文文件的行数与 token 上限（key 为项目内相对路径）。
+ *
+ * 行数是**代理指标**，真约束是 token（见下方 `CONTEXT_TOKEN_BUDGETS`）。
+ * 取 150 行的理由：游戏类 archetype 的 AGENTS.md 内联了共享片段 + 引擎专项硬约束 +
+ * 引擎必读项与验证命令，实测 119–141 行；项目再接入自身规范体系（如既有的 AISpec）会加几行。
+ * 140 曾让一个正常接入的项目立刻报"超限"——那属于阈值过紧而非内容膨胀。
+ * 阈值应当约束**真问题**（每会话固定成本），而不是制造噪音；实测 token 仍在 2100 以内。
+ */
 export const PACK_LIMITS = {
-  'AGENTS.md': 140,
-  '.ai/constitution.md': 140,
+  'AGENTS.md': 150,
+  '.ai/constitution.md': 150,
   '.ai/index/README.md': 200,
 };
 

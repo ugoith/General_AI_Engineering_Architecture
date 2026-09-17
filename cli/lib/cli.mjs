@@ -25,6 +25,12 @@ import { PATTERNS, MATRIX_RULES, antiPatterns } from './patterns.mjs';
 import { PACK_LIMITS, DEFAULT_TASK_BUDGET as DEFAULT_BUDGET } from './limits.mjs';
 import { detectPack, suggestProjectName, suggestEngineVersion } from './detect.mjs';
 import { writeAgentAdapters, buildQuickstartPrompt, detectAgents, installShim } from './install.mjs';
+import {
+  detectFacts, loadFacts, saveFacts, availableCapabilityIds,
+} from './facts.mjs';
+import {
+  loadRules, addRule, auditRules, rulesDigest, nextRuleId,
+} from './rules.mjs';
 
 const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
 
@@ -39,10 +45,16 @@ const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
   ai-arch scale [--gaps]                    评估项目规模等级并列出欠账
   ai-arch patterns [--level S|M|L|XL] [--problem <关键词>]  设计模式选择矩阵
   ai-arch skill <list|show <id>|add <id>>   管理项目内的任务知识（skills）
+  ai-arch rules <list|add|audit>            项目规则：新增约束必须先入库并传播（改代码之前）
+  ai-arch facts [--refresh]                 项目事实与可用能力（引擎版本、编辑器能力等）
   ai-arch doctor                            项目健康检查
   ai-arch packs                             列出可用模板包
   ai-arch upgrade [--apply|--force]         把项目里的框架文件同步到当前版本
   ai-arch help | version
+
+规则新增示例：
+  ai-arch rules add "<一句可判定的规则>" --category style --enforcement tool \
+      --check "npm run lint（规则实现于 eslint 配置）" --rationale "<为什么>"
 
 全局选项：
   --json      机器可读输出（供 AI 解析）
@@ -50,7 +62,7 @@ const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
   -h, --help  帮助
 `;
 
-const PROJECT_COMMANDS = new Set(['index', 'task', 'review', 'scale', 'skill', 'doctor', 'upgrade', 'patterns']);
+const PROJECT_COMMANDS = new Set(['index', 'task', 'review', 'scale', 'skill', 'doctor', 'upgrade', 'patterns', 'rules', 'facts']);
 
 /**
  * 命令自身的选项名：只跳过 kebab→camel 归一化，**仍然原样保留**。
@@ -66,6 +78,7 @@ const COMMAND_FLAGS = [
   'apply', 'strict', 'stale', 'decisions', 'impact', 'gaps', 'contributors',
   'problem', 'level', 'verbose', 'prompt', 'yes', 'list', 'all', 'deep',
   'agent', 'no-index', 'format', 'framework', 'bin', 'from',
+  'statement', 'category', 'enforcement', 'check', 'scope', 'rationale', 'source',
 ];
 
 export async function main(argv) {
@@ -87,6 +100,8 @@ export async function main(argv) {
     if (command === 'install') return cmdInstall(args, flags);
     if (command === 'install-shim') return cmdInstallShim(flags);
     if (command === 'quickstart') return cmdQuickstart(args, flags);
+    if (command === 'rules') return cmdRules(args, flags);
+    if (command === 'facts') return cmdFacts(args, flags);
     if (command === 'patterns') return cmdPatterns(flags);
     if (PROJECT_COMMANDS.has(command)) return cmdProject(command, args, flags);
     process.stderr.write(`未知命令：${command}\n\n${USAGE}`);
@@ -228,12 +243,27 @@ function cmdInstall(args, flags) {
   // 1) 识别类型
   const { files } = walk(targetDir, {});
   const fileList = files.map((f) => normalizeRel(f));
-  const detection = explicitPack
+  let detection = explicitPack
     ? { packId: explicitPack, confidence: 'explicit', evidence: ['由 --pack 指定'], candidates: [] }
     : detectPack(targetDir, fileList);
 
+  // 无任何标记（全新项目 / 纯文档目录）→ 回落到最小档，并明确告知这是回落而非识别结论。
+  // 有互斥证据（多个引擎标记）时**不回落**——那需要人来定。
+  let fellBack = false;
+  if (!detection.packId && detection.reason === 'no-signal') {
+    const fallback = flagString(flags, 'fallback', 'software-cli-small');
+    detection = {
+      ...detection,
+      packId: fallback,
+      confidence: 'fallback',
+      evidence: ['未发现任何项目类型标记（全新或空项目），按最小档接入'],
+      fellBack: true,
+    };
+    fellBack = true;
+  }
+
   if (!detection.packId) {
-    process.stderr.write('[ai-arch] 无法确定项目类型，请用 --pack 指定。\n\n');
+    process.stderr.write('[ai-arch] 无法确定项目类型（检测到互斥证据），请用 --pack 指定。\n\n');
     if (detection.conflict) {
       process.stderr.write(`      检测到多个引擎标记冲突：${detection.conflict.join(' / ')}\n`);
     }
@@ -279,6 +309,18 @@ function cmdInstall(args, flags) {
     const index = scanProject(targetDir, { previous: loadIndex(targetDir) });
     saveIndex(targetDir, index);
     indexSummary = { fileCount: index.fileCount, totalLoc: index.summary.totalLoc, excluded: index.excluded?.count ?? 0, pending: index.summary.pendingDigest };
+  }
+
+  // 6) 项目事实探测（引擎版本、可用能力…）：让后续任务包能说明"哪种做法可行"
+  let factsSummary = null;
+  if (!dryRun) {
+    const { facts } = detectFacts(targetDir);
+    saveFacts(targetDir, facts);
+    factsSummary = {
+      engine: facts.engine ? `${facts.engine.kind} ${facts.engine.version}` : null,
+      available: (facts.capabilities ?? []).filter((c) => c.available).map((c) => c.id),
+      unavailable: (facts.capabilities ?? []).filter((c) => !c.available).map((c) => c.id),
+    };
   }
 
   if (isJson) {
@@ -331,6 +373,173 @@ function cmdInstall(args, flags) {
   process.stdout.write('  3. 健康检查：node .ai/bin/ai-arch.mjs doctor\n');
   process.stdout.write('  4. 试生成一次任务包：node .ai/bin/ai-arch.mjs task "<一个真实任务>"\n');
   process.stdout.write('\n提示：接入产生的 diff 建议单独提交，便于整体回退。\n');
+  return 0;
+}
+
+/* ----------------------------------------------------------- rules */
+
+/**
+ * `rules`：项目规则的入库、查看与自检。
+ *
+ * 存在的理由：开发中用户随时会加约束（"if 嵌套别太深"）。若只把这句话写进某处文档，
+ * 它会在三个环节失效——agent 下次读不到、评审时没人看、也没法判定是否遵守。
+ * 所以新增约束走固定流程：**入库（拿到稳定 ID）→ 传播（改哪些文件）→ 验收（怎么判定）**。
+ */
+function cmdRules(args, flags) {
+  const root = resolveProject(flags, []);
+  const sub = args[0] ?? 'list';
+  const isJson = flagBool(flags, 'json');
+
+  if (sub === 'list') {
+    const data = loadRules(root);
+    const audit = auditRules(root);
+    const digest = rulesDigest(root);
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ rules: data.rules ?? [], summary: audit.summary, hash: digest.hash }, null, 2) + '\n');
+      return 0;
+    }
+    if ((data.rules ?? []).length === 0) {
+      process.stdout.write('项目规则集为空（.ai/rules.json）。\n\n');
+      process.stdout.write('新增一条规则：\n');
+      process.stdout.write('  ai-arch rules add "if 嵌套深度 ≤ 3" --category style --enforcement review \\\n');
+      process.stdout.write('      --check "评审时数嵌套层数；超过则要求提前 return 或抽函数" --rationale "可读性 + 降低认知负担"\n');
+      return 0;
+    }
+    const rows = [['ID', '规则', '类别', '判定方式', '存量违规']];
+    for (const r of data.rules) {
+      rows.push([r.id, r.statement, r.category, r.enforcement, String((r.debt ?? []).length)]);
+    }
+    process.stdout.write(table(`项目规则（共 ${data.rules.length} 条，hash ${digest.hash}）`, rows) + '\n\n');
+    process.stdout.write(`判定方式分布：tool ${audit.summary.tool} / review ${audit.summary.review} / manual ${audit.summary.manual}`);
+    if (audit.summary.withDebt > 0) process.stdout.write(`；有存量违规待迁移 ${audit.summary.withDebt} 条`);
+    process.stdout.write('\n每条规则的完整信息（含 check 与理由）：ai-arch rules list --json\n');
+    return 0;
+  }
+
+  if (sub === 'add') {
+    const statement = args.slice(1).join(' ').trim() || flagString(flags, 'statement', null);
+    if (!statement) throw new Error('用法：ai-arch rules add "<可判定的规则>" --category <类别> --enforcement <tool|review|manual> --check "<怎么判定>"');
+    const result = addRule(root, {
+      statement,
+      category: flagString(flags, 'category', 'style'),
+      enforcement: flagString(flags, 'enforcement', 'review'),
+      check: flagString(flags, 'check', null),
+      scope: flagString(flags, 'scope', null),
+      rationale: flagString(flags, 'rationale', null),
+      source: flagString(flags, 'source', null),
+    });
+    if (!result.ok) {
+      process.stderr.write('[ai-arch] 规则未入库：\n');
+      for (const e of result.errors) process.stderr.write(`  - ${e}\n`);
+      process.stderr.write('\n判定不了的规则等于没有规则——请给出可检查的条件。\n');
+      return 1;
+    }
+    // 自动传播：把规则写进影响矩阵，使"改动相关文件时必须复查该规则"
+    const prop = propagateRule(root, result.rule);
+
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ ok: true, rule: result.rule, propagation: result.propagation, impactMap: prop }, null, 2) + '\n');
+      return 0;
+    }
+    process.stdout.write(`规则已入库：${result.rule.id}\n  ${result.rule.statement}\n\n`);
+    process.stdout.write('接下来必须完成传播（顺序不要颠倒）：\n');
+    result.propagation.forEach((p, i) => {
+      process.stdout.write(`  ${i + 1}. ${p.file}\n     ${p.action}\n     原因：${p.reason}\n`);
+    });
+    if (prop.added) {
+      process.stdout.write(`\n已自动写入影响矩阵：新增 trigger "${result.rule.id.toLowerCase()}-rule-check"\n`);
+      process.stdout.write('  （改动相关文件时 review --impact 会提醒复查该规则）\n');
+    }
+    process.stdout.write('\n注意：规则要在**下一次开工**真的被看到——任务包会自动带上 rules.json 的 hash，\n');
+    process.stdout.write('      规则有变时任务包会提示重读，因此改完记得重新生成任务包。\n');
+    return 0;
+  }
+
+  if (sub === 'audit') {
+    const { issues, summary } = auditRules(root);
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ issues, summary }, null, 2) + '\n');
+      return issues.some((i) => i.level === 'error') ? 1 : 0;
+    }
+    process.stdout.write(`规则集自检：共 ${summary.total} 条（tool ${summary.tool} / review ${summary.review} / manual ${summary.manual}）\n\n`);
+    if (issues.length === 0) {
+      process.stdout.write('  未发现问题。\n');
+    } else {
+      for (const i of issues) {
+        const icon = i.level === 'error' ? '✗' : i.level === 'warn' ? '!' : 'i';
+        process.stdout.write(`  ${icon} [${i.id ?? '-'}] ${i.message}\n`);
+      }
+    }
+    return issues.some((i) => i.level === 'error') ? 1 : 0;
+  }
+
+  throw new Error(`未知子命令 "${sub}"。用法：ai-arch rules <list|add|audit>`);
+}
+
+/**
+ * 把规则写进影响矩阵（`.ai/index/impact-map.json`）。
+ *
+ * 这是"用户提出约束 → 框架自动更新"里**唯一能自动做**的一步：
+ * 规则文件本身入库了，但若没人记得在变更时复查它，规则一样会烂掉。
+ * 其余位置（宪法红线、评审清单、lint 配置）需要人/AI 改写，CLI 只给出精确清单，不代笔。
+ */
+function propagateRule(root, rule) {
+  const file = path.join(root, '.ai', 'index', 'impact-map.json');
+  const map = readJsonSafe(file, null);
+  if (!map || !Array.isArray(map.rules)) return { added: false, reason: '未找到 .ai/index/impact-map.json，跳过' };
+  const trigger = `${rule.id.toLowerCase()}-rule-check`;
+  if (map.rules.some((r) => r.trigger === trigger)) return { added: false, reason: '已存在' };
+  const scopeHint = rule.scope && rule.scope !== '**' ? `（仅适用于 ${rule.scope}）` : '';
+  map.rules.push({
+    trigger,
+    mustUpdate: [],
+    adrRequired: false,
+    note: `新增/修改代码时复查规则 ${rule.id}${scopeHint}：${rule.statement}；判定方式（${rule.enforcement}）：${rule.check}`,
+  });
+  writeJson(file, map);
+  return { added: true, trigger };
+}
+
+/* ----------------------------------------------------------- facts */
+
+/** `facts`：项目事实与可用能力（引擎版本、编辑器能力…），写入 `.ai/project-facts.json`。 */
+function cmdFacts(args, flags) {
+  const root = resolveProject(flags, []);
+  const sub = args[0] ?? 'show';
+
+  if (sub === 'refresh' || flagBool(flags, 'refresh') || !loadFacts(root)) {
+    const { facts } = detectFacts(root);
+    saveFacts(root, facts);
+  }
+  const facts = loadFacts(root);
+
+  if (flagBool(flags, 'json') || sub === 'json') {
+    process.stdout.write(JSON.stringify(facts, null, 2) + '\n');
+    return 0;
+  }
+
+  process.stdout.write('项目事实与可用能力（.ai/project-facts.json）\n\n');
+  if (facts?.engine) {
+    process.stdout.write(`  引擎      ：${facts.engine.kind} ${facts.engine.version}\n`);
+    process.stdout.write(`  工程文件  ：${facts.engine.uproject}\n`);
+    process.stdout.write(`  模块      ：${facts.engine.modules.join('、') || '（未声明）'}\n`);
+    process.stdout.write(`  已启用插件：${facts.engine.enabledPlugins.length} 个${facts.engine.enabledPlugins.length > 0 ? `（${facts.engine.enabledPlugins.slice(0, 6).join('、')}${facts.engine.enabledPlugins.length > 6 ? '…' : ''}）` : ''}\n`);
+  } else {
+    process.stdout.write('  引擎      ：未检测到（非引擎项目或缺少工程文件）\n');
+  }
+  process.stdout.write('\n  能力可用性：\n');
+  for (const c of facts?.capabilities ?? []) {
+    const mark = c.available ? '✓' : '✗';
+    process.stdout.write(`   ${mark} ${c.label}\n`);
+    for (const r of c.reasons) process.stdout.write(`       · ${r}\n`);
+    if (c.available) {
+      if (c.configPresent.length === 0 && c.docs) {
+        process.stdout.write(`       → 尚未生成客户端配置；见 ${c.docs}\n`);
+      }
+      if (c.whatItDoesNot) process.stdout.write(`       ! 边界：${c.whatItDoesNot}\n`);
+    }
+  }
+  process.stdout.write('\n能力事实会随探测更新：改引擎版本或启用插件后跑 ai-arch facts refresh\n');
   return 0;
 }
 

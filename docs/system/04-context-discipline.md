@@ -7,12 +7,14 @@
 
 | 层 | 文件 | 何时读 | 上限 | 实测 token（`node scripts/measure-budget.mjs`） |
 |---|---|---|---|---|
-| **L0 入口** | `AGENTS.md` | 每会话（工具自动加载） | ≤ 140 行 | 软件类 ~1600；游戏类 ~1900–2050 |
-| **L1 宪法** | `.ai/constitution.md` | 每会话 | ≤ 140 行 | ~1050（软件）–1700（游戏） |
-| **L2 索引** | `.ai/index/files.json`、`.ai/registry.json`、`.ai/index/impact-map.json`、资产索引 | 接到任务后按需查询 | 每次查询取所需条目 | ~200–2900 |
+| **L0 入口** | `AGENTS.md` | 每会话（工具自动加载） | ≤ 150 行 | 软件类 ~1600；游戏类 ~1900–2050 |
+| **L1 宪法** | `.ai/constitution.md` | 每会话 | ≤ 150 行 | ~1050（软件）–1700（游戏） |
+| **L2 索引** | `.ai/index/files.json`、`.ai/registry.json`、`.ai/index/impact-map.json`、`.ai/rules.json`、`.ai/project-facts.json`、资产索引 | 接到任务后按需查询 | 每次查询取所需条目 | ~200–2900 |
 | **L3 源码** | 具体文件 | 仅当任务包列出，或摘要不足 | 由任务包预算控制 | 变化 |
 
 任务包默认预算：**40000 token**（`--budget` 可调；超过的部分会被列入"丢弃"清单而不是静默省略）。
+
+**行数是代理指标，真约束是 token**：游戏类 `AGENTS.md` 实测 119–141 行（内联共享片段 + 引擎专项硬约束 + 引擎必读项），项目再接入自身规范体系（如既有的 AISpec）会多加几行，因此行数上限取 150。阈值应当约束**真问题**（每会话固定成本），而不是制造噪音；实测 token 仍在上限内。完整理由见 `cli/lib/limits.mjs`。
 
 **固定成本的实际量级**：L0 + L1 ≈ 2600 token（软件类）到 3700 token（游戏类）。这是每个任务都要付的钱，所以它的上限由 `cli/lib/limits.mjs` 强制（`AGENTS_TOKEN_BUDGET` / `CONTEXT_TOKEN_BUDGETS`），`review --drift` 与 `doctor` 都会检查。
 
