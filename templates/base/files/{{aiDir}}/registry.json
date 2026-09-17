@@ -2,5 +2,5 @@
   "schemaVersion": 1,
   "generated": "{{date}}",
   "entities": [],
-  "notes": "每条实体: { kind, name, file, signature, invariants[], owner, hash }。kind ∈ data-model|api|module|class|config|contract|asset。file 用项目根相对路径；hash 与 .ai/index/files.json 中同一文件的 hash 保持一致；invariants 一条一句、写成可验证的断言。变更实体后按 .ai/index/impact-map.json 同步更新受影响的文档与索引。"
+  "notes": "每条实体: { kind, name, file, signature, invariants[], tests[], owner, hash }。kind ∈ data-model|api|module|class|config|contract|asset。file 用项目根相对路径；hash 与 .ai/index/files.json 中同一文件的 hash 保持一致；invariants 一条一句、写成可验证的断言；tests 填能发现不变量被破坏的测试文件（没有测试引用的不变量被破坏时无人能自动发现）。变更实体后按 .ai/index/impact-map.json 同步更新受影响的文档与索引；改完跑 `ai-arch registry audit`。"
 }

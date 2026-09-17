@@ -9,6 +9,11 @@
  *   注册表说实体 X 在文件 F、其 hash 为 H；而索引里 F 的 hash 已变成 H'。
  *   这说明有人改了契约却没更新注册表——后果是后续 AI 会拿旧的不变量做判断。
  *   没有 hash 字段时无法检出这类漂移，这也是为什么注册表条目必须记 hash。
+ *
+ * 同一思路的另一半是 `tests`：不变量是"必须恒成立"的断言，
+ * 而**没人能发现它被破坏**的断言等于文档里的一句话。因此有 invariants 却没有
+ * tests 的实体会被指出（与"判定不了的规则等于没有规则"同一标准），
+ * 契约漂移时也会直接列出该重跑哪些测试。
  */
 
 import path from 'node:path';
@@ -35,13 +40,16 @@ export function auditRegistry(root) {
   const reg = loadRegistry(root);
   const issues = [];
   if (!reg) {
-    return { present: false, issues, summary: { total: 0, kinds: {}, withoutInvariants: 0, withoutHash: 0 } };
+    return { present: false, issues, summary: { total: 0, kinds: {}, withoutInvariants: 0, withoutHash: 0, withoutTests: 0 } };
   }
+  const index = loadIndex(root);
+  const indexed = new Set((index?.files ?? []).map((f) => f.path));
   const entities = Array.isArray(reg.entities) ? reg.entities : [];
   const names = new Set();
   const kinds = {};
   let withoutInvariants = 0;
   let withoutHash = 0;
+  let withoutTests = 0;
 
   for (const [i, e] of entities.entries()) {
     const label = e?.name ?? `#${i}`;
@@ -75,6 +83,25 @@ export function auditRegistry(root) {
           issues.push({ level: 'warn', entity: label, message: `不变量可能不可判定："${inv}"` });
         }
       }
+      // 不变量是"必须恒成立"的断言，因此它天然可被判定的前提是**有人能发现它被破坏**。
+      // 没有测试引用的不变量只能靠人记得——与"判定不了的规则等于没有规则"同一标准。
+      const tests = Array.isArray(e.tests) ? e.tests.filter((t) => typeof t === 'string' && t.trim()) : [];
+      if (tests.length === 0) {
+        withoutTests += 1;
+        issues.push({
+          level: 'warn', entity: label,
+          message: '不变量没有任何测试引用（tests 为空）：被破坏时没有机制能自动发现，只能靠人记得',
+        });
+      } else {
+        for (const t of tests) {
+          if (!indexed.has(normalizeRel(t))) {
+            issues.push({
+              level: 'warn', entity: label,
+              message: `tests 指向的文件不在索引中：${normalizeRel(t)}（路径写错，或该测试还没纳入索引）`,
+            });
+          }
+        }
+      }
     }
     if (!e.hash) {
       withoutHash += 1;
@@ -93,6 +120,7 @@ export function auditRegistry(root) {
       kinds,
       withoutInvariants,
       withoutHash,
+      withoutTests,
       errors: issues.filter((x) => x.level === 'error').length,
       warnings: issues.filter((x) => x.level === 'warn').length,
     },
@@ -163,13 +191,17 @@ export function reconcileRegistry(root, opts = {}) {
       const current = shortHash(entry.hash, 10);
       if (current !== String(e.hash).slice(0, 10)) {
         stale += 1;
+        const tests = Array.isArray(e.tests) ? e.tests.filter((t) => typeof t === 'string' && t.trim()) : [];
         findings.push({
           severity: 'warn',
           code: 'entity-hash-stale',
           target: `${e.name} → ${rel}`,
           message: `契约已变但注册表未同步（注册表 ${String(e.hash).slice(0, 10)} → 索引 ${current}）：`
             + '后续 AI 会据此使用旧的不变量做判断',
-          action: `重新核对 ${e.name} 的 signature 与 invariants，然后更新 hash`,
+          action: `重新核对 ${e.name} 的 signature 与 invariants，然后更新 hash`
+            + (tests.length > 0
+              ? `；并重跑声明的测试：${tests.join('、')}`
+              : '；该实体未声明 tests，不变量是否还成立只能靠人工确认'),
         });
       }
     }
@@ -204,7 +236,7 @@ export function reconcileRegistry(root, opts = {}) {
       target: f.path,
       message: `未登记：risk=${f.risk}，被 ${f.importedBy?.length ?? 0} 处依赖`
         + (f.digest?.purpose ? `；摘要：${String(f.digest.purpose).slice(0, 60)}` : ''),
-      action: '在 .ai/registry.json 登记其 invariants / signature / owner，hash 填该文件 hash 前 10 位',
+      action: '在 .ai/registry.json 登记其 invariants / signature / owner / tests，hash 填该文件 hash 前 10 位',
     });
   }
 

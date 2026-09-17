@@ -117,11 +117,14 @@ ai-arch registry suggest    # 列出值得优先登记的高风险 / 被多方�
 | `file` | 是 | 指向具体文件——没有它就无法与索引对账，漂移检测无从谈起 |
 | `hash` | 强烈建议 | 索引里该文件 hash 的前 10 位。**没有它就只能靠人记得"改过要同步"** |
 | `invariants` | 强烈建议 | 改它时必须保持什么。这是注册表存在的理由；只写名字等于没登记 |
+| `tests` | 强烈建议 | 能发现不变量被破坏的测试文件。**没有测试引用的不变量只能靠人记得** |
 | `signature` / `owner` | 否 | 对外签名、负责人 |
 
-**为什么要记 hash**：注册表说实体 X 在 F、hash 为 H，而索引里 F 的 hash 已是 H′——机械可判定地说明"契约被改但注册表没同步"，后续 AI 会继续拿旧不变量做判断。这是 `review --drift` 的 `entity-hash-stale`（见 `docs/system/05-lifecycle.md` 第三节）。
+**为什么要记 hash**：注册表说实体 X 在 F、hash 为 H，而索引里 F 的 hash 已是 H′——机械可判定地说明"契约被改但注册表没同步"，后续 AI 会继续拿旧不变量做判断。这是 `review --drift` 的 `entity-hash-stale`（见 `docs/system/05-lifecycle.md` 第三节）。漂移报告会直接列出该实体声明的 `tests`，即"该重跑哪些测试"。
 
-**判定不了的条目等于没有条目**（与规则集同一标准）：缺 `invariants`、不变量写成"尽量合理"、缺 `hash`，都会被 `registry audit` 指出来。
+**为什么要记 tests**：不变量是"必须恒成立"的断言，而**没人能发现它被破坏**的断言就是文档里的一句话。所以"有 invariants 但没有 tests"会被 `registry audit` 指出——与"判定不了的规则等于没有规则"同一标准。它不检查测试写了什么（那判定不了），只保证**这条不变量至少有一个机械可执行的归属**。
+
+**判定不了的条目等于没有条目**（与规则集同一标准）：缺 `invariants`、不变量写成"尽量合理"、缺 `tests`、缺 `hash`，都会被 `registry audit` 指出来。
 
 **注册表为空不是错误，是欠账**：`registry audit` 在注册表为空时会以 info 报 `registry-empty` 并附上候选清单，避免这一层建了却永远不被用起来。
 

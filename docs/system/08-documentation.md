@@ -55,12 +55,15 @@
   "file": "src/auth/session.ts",
   "signature": "interface UserSession { userId: string; expiresAt: number }",
   "invariants": ["expiresAt 必须为 UTC 毫秒时间戳", "userId 不得为空"],
+  "tests": ["tests/auth/session.spec.ts"],
   "owner": "@team-auth",
   "hash": "<所在文件的内容 hash 前 10 位>"
 }
 ```
 
 **为什么需要它**：AI 在改动接口前需要知道"这个实体的不变量是什么"。若只靠读源码，它必须读完整文件；有了注册表，它读 5 行就够了。
+
+**`tests` 字段的作用**：不变量是"必须恒成立"的断言，因此必须有人能发现它被破坏——否则它只是文档里的一句话。`registry audit` 会指出"有 invariants 但没有 tests"的实体；`entity-hash-stale`（契约漂移）报出时也会直接列出该重跑哪些测试。注意它**不校验测试内容**（那判定不了），只保证每条不变量至少有一个机械可执行的归属。
 
 ## 五、文档腐烂的四个信号
 

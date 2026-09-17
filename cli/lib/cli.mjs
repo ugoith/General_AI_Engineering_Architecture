@@ -565,8 +565,11 @@ function cmdRegistry(args, flags) {
       process.stdout.write(`  注册表指向的文件不存在 ${missing.length} 处：\n`);
       for (const f of missing) process.stdout.write(`    ! ${f.target}\n`);
     }
-    if (audit.summary.withoutInvariants > 0 || audit.summary.withoutHash > 0) {
-      process.stdout.write(`  待补：无 invariants ${audit.summary.withoutInvariants} 条，无 hash ${audit.summary.withoutHash} 条\n`);
+    if (audit.summary.withoutInvariants > 0 || audit.summary.withoutHash > 0 || audit.summary.withoutTests > 0) {
+      process.stdout.write('  待补：'
+        + `无 invariants ${audit.summary.withoutInvariants} 条，`
+        + `无 tests ${audit.summary.withoutTests} 条，`
+        + `无 hash ${audit.summary.withoutHash} 条\n`);
     }
     process.stdout.write('\n提示：review --drift 会自动带上本项检查，无需单独记忆。\n');
     return audit.summary.errors > 0 ? 1 : 0;
@@ -597,11 +600,14 @@ function cmdRegistry(args, flags) {
     process.stdout.write(`  "file": "${candidates[0].target}",\n`);
     process.stdout.write('  "signature": "接口或数据结构的摘要",\n');
     process.stdout.write('  "invariants": ["改它时必须恒成立的断言（一条一句、可判定）"],\n');
+    process.stdout.write('  "tests": ["能发现不变量被破坏的测试文件路径"],\n');
     process.stdout.write('  "owner": "@team",\n');
     process.stdout.write('  "hash": "该文件在 .ai/index/files.json 里的 hash 前 10 位"\n');
     process.stdout.write('}\n```\n');
     process.stdout.write('\n为什么必须填 hash：它让 review --drift 能检出"契约被改但注册表未同步"，\n');
     process.stdout.write('否则后续 AI 会拿旧的不变量做判断，而这正是最难发现的漂移。\n');
+    process.stdout.write('为什么建议填 tests：没有测试引用的不变量被破坏时，没有任何机制能自动发现——\n');
+    process.stdout.write('它就从"约束"退化成"文档里的一句话"。\n');
     return 0;
   }
 

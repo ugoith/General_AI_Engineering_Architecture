@@ -16,6 +16,28 @@
 - **影响**：全部模板包、CLI、skills。
 - **替代机制**：不适用（初始版本）。
 
+## 2026-09-17 — 新增约束必须先入库（规则集 + 项目事实）
+
+- **变更**：新增
+- **内容**：
+  - 任何新增约束必须先进 `.ai/rules.json`（含稳定 ID、`enforcement`、必填 `--check`）再改代码；不可判定的措辞被 CLI 拒绝入库。
+  - 新能力/新事实必须落盘 `.ai/project-facts.json`，并由 `doctor` 检查是否与实测一致。
+  - 项目规则与事实的 hash 进入任务包，hash 变化即要求下次任务重读。
+- **原因**：约束只在对话里说过一次，下一次开工必然失效；能力变化会改变"什么做法可行"，靠人记不住。
+- **影响**：全部模板包（新增 `rules.json` / `project-facts.json` 种子）、`review --impact`、任务包渲染。
+- **替代机制**：不适用（新增约束，未删除旧规则）。
+
+## 2026-09-17 — 契约层必须可对账（实体注册表）
+
+- **变更**：新增
+- **内容**：
+  - `.ai/registry.json` 的实体新增两项要求：`hash`（与该实体文件在 `.ai/index/files.json` 中的 hash 前 10 位一致）与 `tests`（能发现不变量被破坏的测试文件）。两者缺失会被 `ai-arch registry audit` 指出。
+  - `review --drift` 与 `doctor` 新增机械检查：`entity-hash-stale`（契约被改但注册表未同步）、`entity-file-missing`、`entity-unindexed`、`high-risk-unregistered`、`registry-empty`。
+  - 判定标准与规则集一致：**判定不了的条目等于没有条目**（缺 `invariants`、不变量不可判定、有不变量却无 `tests`，都会被指出）。
+- **原因**：索引只能回答"文件变没变"，回答不了"契约的语义变了吗"。缺少 `hash` 与 `tests` 时，契约静默漂移无法被任何机制发现，后续 AI 会拿**旧的不变量**做判断（来源：`docs/07-research-landscape.md` §6.1）。
+- **影响**：`.ai/registry.json` 格式（向后兼容：两个字段均为可选，但缺失会被报告）、`review --drift` 输出、`doctor`、任务无关的 CI 接入方式。
+- **替代机制**：不适用（新增检查，未删除旧规则）。
+
 <!--
 新增规则时复制下面的模板：
 

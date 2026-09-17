@@ -665,6 +665,9 @@ async function extraTests() {
     const contractPath = path.join(regRoot, 'src', 'session.mjs');
     const contractV1 = 'export function createSession(userId) { return { userId, expiresAt: 0 }; }\n';
     fs.writeFileSync(contractPath, contractV1, 'utf8');
+    fs.mkdirSync(path.join(regRoot, 'tests'), { recursive: true });
+    fs.writeFileSync(path.join(regRoot, 'tests', 'session.spec.mjs'),
+      '// 断言 createSession 的不变量：expiresAt 为 UTC 毫秒时间戳\n', 'utf8');
     await prun(regRoot, ['index']);
 
     const idxReg = loadIndex(regRoot);
@@ -679,6 +682,7 @@ async function extraTests() {
       file: 'src/session.mjs',
       signature: 'createSession(userId): Session',
       invariants: ['expiresAt 必须是 UTC 毫秒时间戳', 'userId 不得为空'],
+      tests: ['tests/session.spec.mjs'],
       owner: '@team-auth',
       hash: cEntry.hash.slice(0, 10),
     }];
@@ -698,6 +702,7 @@ async function extraTests() {
     assert(staleHits.length === 1, `改契约后未检出漂移（实际 ${staleHits.length} 条）`);
     assert(staleHits[0].message.includes('注册表未同步'), '漂移说明未点明原因');
     assert(/[0-9a-f]{10}/.test(staleHits[0].message), '漂移信息未给出新旧 hash');
+    assert(staleHits[0].action.includes('tests/session.spec.mjs'), '漂移未指出该重跑哪些测试');
 
     // C) 契约文件被搬走 → 必须报文件缺失
     fs.renameSync(contractPath, path.join(regRoot, 'src', 'session2.mjs'));
@@ -706,13 +711,26 @@ async function extraTests() {
     assert(regDrift.findings.filter((f) => f.code === 'entity-file-missing').length === 1,
       '契约文件被搬走后未报 entity-file-missing');
 
-    // D) 结构校验：缺 invariants / 缺 hash 必须被指出（判定不了的条目等于没有条目）
-    regData.entities = [{ kind: 'api', name: 'x', file: 'src/session2.mjs' }];
+    // D) 结构校验：判定不了的条目等于没有条目（缺 invariants / 缺 tests / 缺 hash）
+    regData.entities = [
+      { kind: 'api', name: 'x', file: 'src/session2.mjs' },
+      {
+        kind: 'api', name: 'y', file: 'src/session2.mjs',
+        invariants: ['过期时间必须为 UTC 毫秒时间戳'], tests: ['tests/nope.mjs'], hash: 'deadbeef00',
+      },
+      {
+        kind: 'contract', name: 'z', file: 'src/session2.mjs',
+        invariants: ['字段只增不删'], hash: 'deadbeef00',
+      },
+    ];
     fs.writeFileSync(regFile, JSON.stringify(regData, null, 2), 'utf8');
     const regAudit = JSON.parse((await prun(regRoot, ['registry', 'audit', '--json'])).stdout);
     const msgs = regAudit.audit.issues.map((i) => i.message).join(' ');
     assert(/invariants/.test(msgs), '未指出实体缺少 invariants');
     assert(/hash/.test(msgs), '未指出实体缺少 hash');
+    assert(/没有任何测试引用/.test(msgs), '未指出"有不变量却没有测试"（不变量会退化成文档里的一句话）');
+    assert(/tests 指向的文件不在索引中/.test(msgs), '未指出 tests 指向的测试文件不存在');
+    assert(regAudit.audit.summary.withoutTests >= 1, 'withoutTests 汇总缺失');
     // E) suggest 在完全未登记时给出候选与模板
     const suggest = JSON.parse((await prun(regRoot, ['registry', 'suggest', '--json'])).stdout);
     assert(Array.isArray(suggest.candidates), 'registry suggest 未返回候选数组');
