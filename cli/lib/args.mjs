@@ -101,8 +101,8 @@ export function flagBool(flags, key, fallback = false) {
  *  - reserved 里的键只做"跳过归一化"处理，绝不丢弃。
  *
  * 为什么强调这一点：早期实现写成 `if (skip.has(key)) continue;`，把命令自身的选项
- * **整条删掉**了。结果是 `--name AGLS` 被静默忽略、projectName 退化成目录名派生的
- * "Aglsv1 5 0"、还生成了带空格的幽灵目录——一个没有任何报错的失效。
+ * **整条删掉**了。结果是 `--name <项目名>` 被静默忽略、projectName 退化成目录名派生的
+ * 一个带空格的错误名字、还生成了同名的幽灵目录——一个没有任何报错的失效。
  */
 export function normalizeVarFlags(flags, { reserved = [] } = {}) {
   const out = {};

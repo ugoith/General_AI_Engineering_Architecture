@@ -43,7 +43,7 @@ export const AGENT_ADAPTERS = [
 
 本项目的唯一 AI 入口是仓库根目录的 [\`AGENTS.md\`](../AGENTS.md)。请先完整读取它，再按其"工作路由"表决定后续读哪些文件。
 
-- 工程规范权威：\`AISpec/spec/rules.json\`（人读版 \`AISpec/spec/CORE.md\`）；本项目的红线与验证命令在 \`.ai/constitution.md\`。
+- 本项目的规则集在 \`.ai/rules.json\`（含判定方式）；项目事实与可用能力在 \`.ai/project-facts.json\`；红线与验证命令在 \`.ai/constitution.md\`。
 - 索引与任务包在 \`.ai/\`：先用 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 拿读取清单，不要满仓库搜索。
 - 本文件只是指针，不要在这里写知识（知识放 \`.ai/\`，见 \`.ai/index/README.md\`）。
 `,
@@ -62,7 +62,7 @@ alwaysApply: true
 
 先读仓库根的 \`AGENTS.md\`，再按它的路由表读文件。
 
-- 工程规范权威：\`AISpec/spec/rules.json\`（人读版 \`AISpec/spec/CORE.md\`）。
+- 本项目的规则集在 \`.ai/rules.json\`；事实与能力在 \`.ai/project-facts.json\`。
 - 接入与索引说明：\`.ai/index/README.md\`；项目红线与验证命令：\`.ai/constitution.md\`。
 - 接任务前先跑 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 拿读取清单。
 
@@ -79,7 +79,7 @@ alwaysApply: true
 仓库根的 \`AGENTS.md\` 是唯一入口，请先完整读取它。
 
 - 索引与任务包在 \`.ai/\`：\`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 生成读取清单。
-- 工程规范权威：\`AISpec/spec/rules.json\`；项目红线与验证命令：\`.ai/constitution.md\`。
+- 项目规则集：\`.ai/rules.json\`；项目红线与验证命令：\`.ai/constitution.md\`。
 `,
   },
   {
@@ -93,7 +93,7 @@ alwaysApply: true
 
 - 任务开始前先跑 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\`，按它给出的读取清单读文件，不要全仓库搜索。
 - 项目红线、验证命令：\`.ai/constitution.md\`；索引说明：\`.ai/index/README.md\`。
-- 工程规范权威：\`AISpec/spec/rules.json\`。
+- 项目规则集：\`.ai/rules.json\`（含每条规则的判定方式）。
 `,
   },
   {
@@ -119,7 +119,7 @@ alwaysApply: true
 先读仓库根的 \`AGENTS.md\`。
 
 - 接任务前跑 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\`，按读取清单读文件。
-- 红线与验证命令：\`.ai/constitution.md\`；工程规范权威：\`AISpec/spec/rules.json\`。
+- 红线与验证命令：\`.ai/constitution.md\`；规则集：\`.ai/rules.json\`。
 `,
   },
 ];

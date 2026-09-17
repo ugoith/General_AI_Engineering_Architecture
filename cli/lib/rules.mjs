@@ -21,7 +21,7 @@ export const RULE_ENFORCEMENT = ['tool', 'review', 'manual'];
 
 /**
  * 规则字段说明（写进生成的文件头部，便于人直接读懂）：
- *  - `id`         ：稳定 ID（R-001…），引用时只引 ID，不复述正文（对应 AISpec R-06 稳定标识）
+ *  - `id`         ：稳定 ID（R-001…），引用时只引 ID，不复述正文（稳定标识：引用只引 ID，正文改了引用不失效）
  *  - `statement`  ：一句话规则，必须可判定（禁止"代码要整洁"这类不可判定的表述）
  *  - `category`   ：style/naming/architecture/process/security/performance/testing
  *  - `enforcement`：tool（有工具可自动判定）/ review（评审时人工判定）/ manual（只能靠人）

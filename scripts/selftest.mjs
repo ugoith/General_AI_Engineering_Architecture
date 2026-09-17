@@ -389,10 +389,10 @@ async function extraTests() {
       '!keep.log',
       '',
     ].join('\n'), 'utf8');
-    const dirsToMake = ['Source/AGLS/Private', 'Plugins/Foo/Intermediate/Build/UHT', 'Plugins/Foo/Binaries/Win64', 'Intermediate/Build', 'DerivedDataCache', 'Content', 'node_modules/pkg'];
+    const dirsToMake = ['Source/MyGame/Private', 'Plugins/Foo/Intermediate/Build/UHT', 'Plugins/Foo/Binaries/Win64', 'Intermediate/Build', 'DerivedDataCache', 'Content', 'node_modules/pkg'];
     for (const d of dirsToMake) fs.mkdirSync(path.join(gi, d), { recursive: true });
     const write = (rel, text) => fs.writeFileSync(path.join(gi, rel), text, 'utf8');
-    write('Source/AGLS/Private/Real.cpp', 'int main(){return 0;}\n');
+    write('Source/MyGame/Private/Real.cpp', 'int main(){return 0;}\n');
     write('Plugins/Foo/Intermediate/Build/UHT/Gen.gen.cpp', '// 生成物\n');
     write('Plugins/Foo/Binaries/Win64/Foo.modules', 'artifact\n');
     write('Intermediate/Build/Thing.obj', 'x\n');
@@ -404,7 +404,7 @@ async function extraTests() {
     await prun(gi, ['index']);
     const giIdx = loadIndex(gi);
     const paths = giIdx.files.map((f) => f.path);
-    assert(paths.includes('Source/AGLS/Private/Real.cpp'), '真实源码未被索引');
+    assert(paths.includes('Source/MyGame/Private/Real.cpp'), '真实源码未被索引');
     for (const bad of [
       'Plugins/Foo/Intermediate/Build/UHT/Gen.gen.cpp',
       'Plugins/Foo/Binaries/Win64/Foo.modules',
@@ -497,20 +497,20 @@ async function extraTests() {
     pass();
 
     begin('行为：init 的命令选项不会被当成 pack 变量丢弃');
-    // 回归测试：真实事故——COMMAND_FLAGS 漏了 `name`，导致 `--name AGLS` 被静默忽略，
-    // 项目名退化成目录名派生的 "Aglsv1 5 0"，还生成了带空格的幽灵目录 Source/Aglsv1 5 0/。
-    const named = tmpDir('AGLSV1.5.0');
+    // 回归测试：真实事故——COMMAND_FLAGS 漏了 `name`，导致 `--name <项目名>` 被静默忽略，
+    // 项目名退化成目录名派生的带空格名字，还生成了同名的幽灵目录（真实事故）。
+    const named = tmpDir('MyGameV1.5.0');
     const namedOut = JSON.parse((await run([
-      'init', named, '--pack', 'game-unreal', '--name', 'AGLS', '--ueVersion', '5.7', '--dry-run', '--json',
+      'init', named, '--pack', 'game-unreal', '--name', 'MyGame', '--ueVersion', '5.7', '--dry-run', '--json',
     ])).stdout);
-    assert(namedOut.variables.projectName === 'AGLS',
-      `--name 未生效：projectName=${namedOut.variables.projectName}（期望 AGLS）`);
-    assert(namedOut.variables.projectTitle === 'AGLS',
+    assert(namedOut.variables.projectName === 'MyGame',
+      `--name 未生效：projectName=${namedOut.variables.projectName}（期望 MyGame）`);
+    assert(namedOut.variables.projectTitle === 'MyGame',
       `--name 派生的 projectTitle 异常：${namedOut.variables.projectTitle}`);
     assert(namedOut.variables.ueVersion === '5.7', `--ueVersion 未生效：${namedOut.variables.ueVersion}`);
     assert(!namedOut.written.some((w) => /\s/.test(w)),
       `生成路径含空格（幽灵目录）：${namedOut.written.filter((w) => /\s/.test(w)).slice(0, 3).join(', ')}`);
-    assert(namedOut.written.includes('Source/AGLS/README.md'),
+    assert(namedOut.written.includes('Source/MyGame/README.md'),
       `项目名未落到源码目录：${namedOut.written.filter((w) => w.startsWith('Source/')).join(', ')}`);
     fs.rmSync(named, { recursive: true, force: true });
     pass();

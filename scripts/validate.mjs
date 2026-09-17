@@ -381,6 +381,38 @@ if (!fs.readFileSync(path.join(repo, 'docs', 'system', '07-cli.md'), 'utf8').inc
   fail('cli-doc', 'docs/system/07-cli.md 缺少 CLI 说明');
 }
 
+/* ------------------------------------- 11. 框架自身不得耦合具体项目 */
+
+say('[11/11] 框架通用性（不得耦合任何具体项目）');
+/**
+ * 为什么要有这条检查：框架的价值在于"方法的提炼"。一旦把某个真实项目的名字、插件清单、
+ * 私有仓库地址或本机路径写进模板与代码，所有其他用户都会看到别人的项目细节，
+ * 更糟的是它会被当成规范的一部分被复制。这类污染只能靠机械检查挡住。
+ *
+ * 检查的是**项目专有标识**，不是"任何具体字符串"：中性占位名（MyGame / Foo / Demo）
+ * 与通用示例值（例如把 5.7 当示例版本号）都是允许的。
+ */
+const PROJECT_SPECIFIC = [
+  { re: /\bAGLS\b/i, why: '具体项目名' },
+  { re: /\bAISpec\b/, why: '具体项目的规范体系名' },
+  { re: /git\.tencent\.com|berserkwang/i, why: '私有仓库地址' },
+  { re: /\b(ClimbingNavigation|HelpfulFunctions|IWALS_AbilitySystem|JakubAnimNodes|JakubCableComponent|GraphDebbuger)\b/, why: '具体项目的插件清单' },
+  { re: /D:\\UE_\d/i, why: '本机绝对路径' },
+];
+const SCAN_EXT = /\.(mjs|js|json|md|txt|yml|yaml|toml|cs|cpp|h|gd|ts)$/i;
+const selfFiles = walk(repo, { ignore: ['.git/', 'dist/', 'node_modules/'] }).files
+  .filter((f) => SCAN_EXT.test(f))
+  // validate 自身持有这些模式的定义，跳过以免自报
+  .filter((f) => normalizeRel(f) !== 'scripts/validate.mjs');
+for (const rel of selfFiles) {
+  const text = fs.readFileSync(path.join(repo, rel), 'utf8');
+  for (const sig of PROJECT_SPECIFIC) {
+    if (sig.re.test(text)) {
+      fail('project-coupling', `${rel} 含${sig.why}：框架必须与具体项目解耦，请改用中性示例`);
+    }
+  }
+}
+
 /* --------------------------------------------------------------- 输出 */
 
 const width = 78;
