@@ -24,6 +24,14 @@
                 ↑ 本框架要消灭的就是这一步
 ```
 
+## 与市面框架的关系
+
+我们把这条赛道上的主流框架（Spec Kit、OpenSpec、BMAD、GSD、Spec Kitty、Reversa）以及相关标准（AGENTS.md、Agent Skills、MCP、CodeDNA）做过一轮定向调研，并逐维对照了本框架的定位与优化空间：
+
+- 报告：[`docs/07-research-landscape.md`](docs/07-research-landscape.md)；导出 Word：`python scripts/md-to-docx.py docs/07-research-landscape.md out.docx`
+- **一句话定位**：主流框架解决「把需求变成可审查的产物」；本框架解决「让 agent 不要重复读、不要用过期前提、不要把约束说出来就忘掉」。两者互补，重叠面很小。
+- **已知短板（不藏）**：**验证**维度只有机械漂移检测，缺"设计意图 vs 实现"的一致性检查；**角色**维度刻意留白——这是为可移植性做的权衡，理由与改进路径见报告 6.2。
+
 ## 它解决什么具体问题
 
 | 痛点 | 机制 | 效果（实测） |
