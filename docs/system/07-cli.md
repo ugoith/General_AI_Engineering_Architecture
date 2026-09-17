@@ -141,6 +141,64 @@ node scripts/pack.mjs        # → dist/ai-arch.mjs + dist/ai-arch.cmd + dist/ai
 - 环境变量：`AI_ARCH_HOME`（改缓存位置）、`AI_ARCH_BUNDLE_ROOT`（打包版自用）、`AI_ARCH_SELF`（打包版指向自身，供 `install-shim` 复制）。
 - 真 `.exe`（单文件可执行）需要 Node 的 SEA + postject，或 Node 26+ 的内建支持；本框架不引入该构建依赖，用"单 `.mjs` + 启动器"替代。
 
+## 技能部署：装到 agent 自己的技能根目录才算数
+
+`install` 除了写 `.ai/skills/`（框架内的副本），还会把技能复制到**每个 agent 自己的技能根目录**——
+因为 Claude Code 与 DSH 都不会去 `.ai/skills/` 找技能，只放那里等于没装。
+
+| agent | 指针文件 | 技能根目录 | 依据 |
+|---|---|---|---|
+| Claude Code | `.claude/CLAUDE.md` | `.claude/skills/<id>/SKILL.md` | 扫描项目/插件的 `skills/` |
+| DeepSeek Harness | `.dsh/AGENTS.md` | `.dsh/skills/<id>/SKILL.md` | `dsh-skill-filesystem` 扫描项目 `.dsh/skills/`，**不支持嵌套 SKILL.md** |
+| Cursor | `.cursor/rules/ai-arch.mdc` | —— | 规则文件足以承载指针 |
+| Codex / Copilot / WorkBuddy / Continue | 各自指针文件 | —— | 同上 |
+
+**技能 frontmatter 必须工具中立**（`scripts/validate.mjs` 强制）：
+
+```yaml
+---
+name: code-review              # 必填，须等于目录名
+description: 提交前评审与定期架构评审的可执行清单   # 必填
+user-invocable: true           # 建议：允许用户直接点名调用
+whenToUse: 提交前自查、评审他人改动、定期架构评审   # 必填
+---
+```
+
+**注意**：不要用自造键（例如 `when`）。DSH 的 skill 发现只认标准键，**键名不符会让整个 skill 被丢弃**
+（不是静默放行）——这类"skill 装了但从不触发"的问题极难排查，因此校验器直接拦住。
+
+## 分发给其它 agent：`scripts/dist.mjs`
+
+一份源（`skills/`、`cli/`、`templates/`），产出三种目标形态：
+
+```bash
+node scripts/dist.mjs --report   # 先看将产出什么、各目标的要求
+node scripts/dist.mjs            # 产出
+```
+
+| 产出 | 目标 | 形态与要求 |
+|---|---|---|
+| `dist/skills/` | 任何遵循 Agent Skills 标准的工具 | 纯目录 bundle，无构建步骤；DSH 与 Claude 通吃 |
+| `dist/plugins/claude-code/` | Claude Code | `.claude-plugin/plugin.json`（`name` 必填 kebab-case、`version` 语义化）+ `skills/`（默认扫描） |
+| `dist/plugins/dsh/` | DeepSeek Harness | npm 包 + `cordis.patch.yml`（Cordis 插件行）；host 入口导出 `name`/`inject`/`apply`，注册只读工具 |
+
+**为什么源只留一份、其余全部生成**：同一份知识复制成三套目录必然漂移。生成物不入库（`.gitignore` 忽略 `dist/`），
+每次发布重建，因此不存在"改了源忘了改副本"。
+
+**DSH 插件只暴露只读命令**（`doctor` / `task` / `rules` / `rules add` / `facts` / `review --drift`）：
+初始化与升级会写文件，属于"需要人确认的动作"，不由模型直接触发。
+
+**离线验证**（本机没有可启动的 DSH profile，因此把能证伪的风险点全部离线覆盖）：
+
+```bash
+node scripts/verify-dsh.mjs
+```
+
+它检查：包元数据与补丁形状、host 入口可否被 ESM 导入（含 `import.meta.dirname` 用法）、
+导出是否符合 DSH 契约、工具是否注册且有足够详细的描述、**只读工具在真实项目上可执行且不改动文件**、
+随包 skills 的 frontmatter 与"无嵌套 SKILL.md"。当前 61 项全通过。
+它**不能**证明：工具在真实 DSH 会话中被模型调用的表现——这一点在产出物的 README 里也如实标注。
+
 ## init
 
 ```bash

@@ -14,8 +14,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { exists, isDir, isFile, normalizeRel, ensureDir, walk, readJsonSafe } from './fsx.mjs';
 import { detectPack, suggestProjectName, suggestEngineVersion } from './detect.mjs';
-import { frameworkRoot, frameworkVersion, templatesDir } from './framework.mjs';
-import { listPacks } from './pack.mjs';
+import { frameworkRoot, frameworkVersion, templatesDir, skillsDir as frameworkSkillsDir } from './framework.mjs';
+import { listPacks, listAvailableSkills } from './pack.mjs';
 import { initProject, readManaged } from './scaffold.mjs';
 
 /** 生成的适配文件的统一标记：让用户敢删、让工具知道它是派生物。 */
@@ -29,6 +29,9 @@ export const ADAPTER_MARK = (agent) =>
  *  - `detectDir`：**用于探测项目是否在用这个 agent** 的目录（必须是 agent 的根目录，且不能是嵌套子目录，
  *     否则"目录已存在才写"的判定永远为假——真实故障：`.cursor/rules` 这种子目录导致探测失败）。
  *  - `file`：实际写入的相对路径（agent 约定的规则文件位置）。
+ *  - `skillsDir`：该 agent 的**技能根目录**（省略表示它不通过目录发现技能）。
+ *     依据：Claude Code 扫描项目/插件的 `skills/`；DSH 的 `dsh-skill-filesystem` 扫描项目 `.dsh/skills/`，
+ *     且**不支持嵌套 SKILL.md**（技能目录必须直接位于根下）。
  *  - `body`：指针正文（只有"去读 AGENTS.md 与 .ai/"的指示，不复制知识）。
  *
  * 注意：刻意**不**生成 `.claude/settings.json`——那属于用户的 agent 配置，框架不应改。
@@ -39,6 +42,7 @@ export const AGENT_ADAPTERS = [
     label: 'Claude Code',
     detectDir: '.claude',
     file: '.claude/CLAUDE.md',
+    skillsDir: '.claude/skills',
     body: () => `# CLAUDE.md
 
 本项目的唯一 AI 入口是仓库根目录的 [\`AGENTS.md\`](../AGENTS.md)。请先完整读取它，再按其"工作路由"表决定后续读哪些文件。
@@ -46,6 +50,22 @@ export const AGENT_ADAPTERS = [
 - 本项目的规则集在 \`.ai/rules.json\`（含判定方式）；项目事实与可用能力在 \`.ai/project-facts.json\`；红线与验证命令在 \`.ai/constitution.md\`。
 - 索引与任务包在 \`.ai/\`：先用 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 拿读取清单，不要满仓库搜索。
 - 本文件只是指针，不要在这里写知识（知识放 \`.ai/\`，见 \`.ai/index/README.md\`）。
+`,
+  },
+  {
+    id: 'dsh',
+    label: 'DeepSeek Harness',
+    detectDir: '.dsh',
+    file: '.dsh/AGENTS.md',
+    skillsDir: '.dsh/skills',
+    body: () => `# AGENTS.md（DeepSeek Harness 指针）
+
+本项目的 AI 入口是仓库根的 \`AGENTS.md\`，请先完整读它。
+
+- 索引 / 任务包 / 决策记录都在 \`.ai/\`（工具无关，不要搬进本目录）。
+- 接任务：\`node .ai/bin/ai-arch.mjs task "<任务描述>"\` —— 先拿读取清单，不要满仓库搜索。
+- 规则集 \`.ai/rules.json\`；事实与可用能力 \`.ai/project-facts.json\`。
+- 技能在本目录的 \`skills/\` 下（DSH 的 skill 根目录之一，不支持嵌套，因此技能直接平铺）。
 `,
   },
   {
@@ -142,8 +162,11 @@ function presentAdapters(root) {
  *  - 或 `auto`/`all` 时项目里**已存在**对应目录的 agent
  * 已存在且内容非本框架生成的文件一律不动（项目原有文件优先级最高）。
  */
-export function writeAgentAdapters(root, { agents = 'auto', dryRun = false, aiDir = '.ai' } = {}) {
+export function writeAgentAdapters(root, {
+  agents = 'auto', dryRun = false, aiDir = '.ai', skillIds = null, forceSkills = false,
+} = {}) {
   const all = AGENT_ADAPTERS;
+  const wantedSkills = skillIds ?? listAvailableSkills();
   let targets;
   if (agents === 'all') targets = all;
   else if (agents === 'auto') targets = presentAdapters(root);
@@ -160,28 +183,54 @@ export function writeAgentAdapters(root, { agents = 'auto', dryRun = false, aiDi
   const written = [];
   const skipped = [];
   const refused = [];
+  const skillsWritten = [];
+
   for (const agent of targets) {
     const abs = path.join(root, agent.file);
     const body = `${ADAPTER_MARK(agent.id)}\n${agent.body({ aiDir })}`;
+    let pointerHandled = false;
     if (isFile(abs)) {
       const current = fs.readFileSync(abs, 'utf8');
       if (current.includes('由 ai-arch 安装时生成')) {
-        if (current === body) { skipped.push(agent.file); continue; }
-        if (!dryRun) fs.writeFileSync(abs, body, 'utf8');
-        written.push(agent.file);
-        continue;
+        if (current === body) skipped.push(agent.file);
+        else {
+          if (!dryRun) fs.writeFileSync(abs, body, 'utf8');
+          written.push(agent.file);
+        }
+        pointerHandled = true;
+      } else {
+        // 项目里已有的同名文件（例如项目自己写的 CLAUDE.md）→ 绝不覆盖
+        refused.push(agent.file);
+        pointerHandled = true;
       }
-      // 项目里已有的同名文件（例如项目自己写的 CLAUDE.md）→ 绝不覆盖
-      refused.push(agent.file);
-      continue;
     }
-    if (!dryRun) {
-      ensureDir(path.dirname(abs));
-      fs.writeFileSync(abs, body, 'utf8');
+    if (!pointerHandled) {
+      if (!dryRun) {
+        ensureDir(path.dirname(abs));
+        fs.writeFileSync(abs, body, 'utf8');
+      }
+      written.push(agent.file);
     }
-    written.push(agent.file);
+
+    // 技能要装进**该 agent 自己的技能根目录**才算被它发现：
+    // 放在 .ai/skills/ 只是"框架内的副本"，Claude/DSH 都不会去那里找。
+    if (!agent.skillsDir) continue;
+    for (const id of wantedSkills) {
+      const src = path.join(frameworkSkillsDir(), id, 'SKILL.md');
+      if (!isFile(src)) continue;
+      const dest = path.join(root, agent.skillsDir, id, 'SKILL.md');
+      const rel = normalizeRel(path.relative(root, dest));
+      if (isFile(dest) && !forceSkills) { skipped.push(rel); continue; }
+      if (!dryRun) {
+        ensureDir(path.dirname(dest));
+        fs.copyFileSync(src, dest);
+      }
+      skillsWritten.push(rel);
+    }
   }
-  return { written, skipped, refused, detected: detectAgents(root) };
+  return {
+    written, skipped, refused, skills: skillsWritten, detected: detectAgents(root),
+  };
 }
 
 /**

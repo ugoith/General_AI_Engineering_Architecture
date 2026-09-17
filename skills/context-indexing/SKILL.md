@@ -1,7 +1,8 @@
 ---
 name: context-indexing
 description: 维护 .ai/index/files.json 的语义摘要，让后续任务不必重读源码
-when: 接手新任务前、大改动后、review --drift 报告 digest-stale 时
+user-invocable: true
+whenToUse: 接手新任务前、大改动后、review --drift 报告 digest-stale 时
 ---
 
 # 维护文件索引与摘要

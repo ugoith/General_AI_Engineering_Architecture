@@ -1,7 +1,8 @@
 ---
 name: test-strategy
 description: 按规模与风险决定测什么、测到什么程度、放哪一层
-when: 新增行为、修 bug、重构前建立安全网
+user-invocable: true
+whenToUse: 新增行为、修 bug、重构前建立安全网
 ---
 
 # 测试策略

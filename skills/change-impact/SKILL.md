@@ -1,7 +1,8 @@
 ---
 name: change-impact
 description: 改动前后做影响面分析，避免"改了 A 忘了 B"
-when: 修改接口/数据模型/模块边界/公共行为前后
+user-invocable: true
+whenToUse: 修改接口/数据模型/模块边界/公共行为前后
 ---
 
 # 变更影响面分析与同步更新

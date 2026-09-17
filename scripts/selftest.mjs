@@ -34,7 +34,7 @@ const PACKS = [
 ];
 
 const { main } = await import(pathToFileURL(path.join(cliLib, 'cli.mjs')).href);
-const { sha256, isFile, readJsonSafe, walk, normalizeRel } = await import(pathToFileURL(path.join(cliLib, 'fsx.mjs')).href);
+const { sha256, isFile, isDir, readJsonSafe, walk, normalizeRel } = await import(pathToFileURL(path.join(cliLib, 'fsx.mjs')).href);
 const { loadIndex } = await import(pathToFileURL(path.join(cliLib, 'indexer.mjs')).href);
 const { PACK_LIMITS } = await import(pathToFileURL(path.join(cliLib, 'limits.mjs')).href);
 
@@ -560,6 +560,48 @@ async function extraTests() {
     // 索引不应包含被忽略的生成物
     assert(!inst.written.some((w) => w.startsWith('Binaries/')), 'install 生成了被忽略目录下的文件');
     fs.rmSync(instRoot, { recursive: true, force: true });
+    pass();
+
+    begin('行为：install 把技能装进各 agent 的技能根目录');
+    // 真实缺口：技能只放 .ai/skills/ 时，Claude Code 与 DSH 都不会去那里找，等于没装。
+    // 依据：Claude 扫描项目/插件 skills/；DSH dsh-skill-filesystem 扫描 .dsh/skills/（不支持嵌套）。
+    const skillRoot = tmpDir('skills-deploy');
+    fs.mkdirSync(path.join(skillRoot, '.claude'), { recursive: true });
+    fs.mkdirSync(path.join(skillRoot, '.dsh'), { recursive: true });
+    fs.writeFileSync(path.join(skillRoot, 'main.mjs'), 'export const x = 1;\n', 'utf8');
+    const skillInstall = JSON.parse((await run(['install', skillRoot, '--pack', 'software-cli-small', '--json'])).stdout);
+    assert(Array.isArray(skillInstall.agentAdapters.detected) && skillInstall.agentAdapters.detected.includes('claude'),
+      '未探测到 .claude 目录');
+    assert(skillInstall.agentAdapters.detected.includes('dsh'), '未探测到 .dsh 目录');
+    const deployed = skillInstall.agentAdapters.skills ?? [];
+    assert(deployed.length > 0, '未部署任何技能');
+    for (const agentDir of ['.claude/skills', '.dsh/skills']) {
+      const dir = path.join(skillRoot, ...agentDir.split('/'));
+      assert(isDir(dir), `未创建技能根目录：${agentDir}`);
+      const ids = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+      assert(ids.length >= 7, `${agentDir} 下技能数不足：${ids.length}`);
+      for (const id of ids) {
+        assertFile(skillRoot, `${agentDir}/${id}/SKILL.md`, { minBytes: 100 });
+      }
+    }
+    // 技能必须是**平铺的技能目录**（DSH 不支持嵌套 SKILL.md）
+    const nestedSkill = [];
+    const scanNested = (d, depth) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        if (!e.isDirectory()) continue;
+        const p = path.join(d, e.name);
+        if (depth > 0 && isFile(path.join(p, 'SKILL.md'))) nestedSkill.push(path.relative(skillRoot, p));
+        scanNested(p, depth + 1);
+      }
+    };
+    scanNested(path.join(skillRoot, '.dsh', 'skills'), 0);
+    assert(nestedSkill.length === 0, `技能目录出现嵌套 SKILL.md（DSH 不会发现）：${nestedSkill.join(', ')}`);
+    // frontmatter 必须是标准键
+    const sample = fs.readFileSync(path.join(skillRoot, '.dsh', 'skills', deployed[0].split('/')[2], 'SKILL.md'), 'utf8');
+    const fmSample = sample.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    assert(fmSample && /^whenToUse:/m.test(fmSample[1]),
+      '部署的技能缺 whenToUse（DSH 与 Claude 均不识别自定义键）');
+    fs.rmSync(skillRoot, { recursive: true, force: true });
     pass();
 
     begin('行为：rules——新增约束必须入库、可判定、并自动传播');

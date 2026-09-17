@@ -1,7 +1,8 @@
 ---
 name: adr-writing
 description: 用 20 分钟写一条能指导未来的决策记录（ADR）
-when: 引入依赖、改模块边界、改数据/接口契约、采用或放弃设计模式、确定长期约束时
+user-invocable: true
+whenToUse: 引入依赖、改模块边界、改数据/接口契约、采用或放弃设计模式、确定长期约束时
 ---
 
 # 写一条 ADR

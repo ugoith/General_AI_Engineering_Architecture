@@ -358,6 +358,15 @@ function cmdInstall(args, flags) {
     process.stdout.write(`  agent 指针 ${adapter.written.length} 个：\n`);
     for (const w of adapter.written) process.stdout.write(`      + ${w}\n`);
   }
+  if ((adapter.skills ?? []).length > 0) {
+    const perAgent = new Map();
+    for (const rel of adapter.skills) {
+      const key = rel.split('/').slice(0, -2).join('/');
+      perAgent.set(key, (perAgent.get(key) ?? 0) + 1);
+    }
+    process.stdout.write(`  技能已装入各 agent 的技能根目录（放在 .ai/skills/ 不会被它们发现）：\n`);
+    for (const [dir, n] of perAgent) process.stdout.write(`      + ${dir}/ —— ${n} 个 skill\n`);
+  }
   if (adapter.refused.length > 0) {
     process.stdout.write(`  agent 目录下已有同名文件，未覆盖：${adapter.refused.join('、')}\n`);
   }

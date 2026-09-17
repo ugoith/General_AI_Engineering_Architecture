@@ -228,21 +228,37 @@ for (const pack of packs) {
 
 /* ------------------------------------------------------------- 4. skills */
 
-say('[4/10] skills frontmatter');for (const id of knownSkills) {
+say('[4/10] skills frontmatter（工具中立格式）');
+/**
+ * frontmatter 必须符合 Agent Skills 标准，才能被各 agent 正确发现。
+ * 依据：
+ *  - DSH `dsh-skill-filesystem`：必填 `name` 与 `description`，可选 `whenToUse`；
+ *    键名拼写不符会让整个 skill 被丢弃（不是静默放行）
+ *  - Claude Code：默认扫描 `./skills/`，技能同样是 `SKILL.md` + frontmatter
+ * 因此强制 `name`（须等于目录名）、`description`、`whenToUse`。
+ * 早期实现用的是自造键 `when`——两家都不认识，等于 skill 的加载条件对 agent 不可见。
+ */
+for (const id of knownSkills) {
   const text = fs.readFileSync(path.join(repo, 'skills', id, 'SKILL.md'), 'utf8');
   const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!fm) {
     fail('skill-frontmatter', `skills/${id}/SKILL.md 缺少 frontmatter`);
     continue;
   }
-  for (const field of ['name', 'description', 'when']) {
+  for (const field of ['name', 'description', 'whenToUse']) {
     if (!new RegExp(`^${field}:`, 'm').test(fm[1])) {
-      fail('skill-frontmatter', `skills/${id}/SKILL.md frontmatter 缺少 ${field}`);
+      fail('skill-frontmatter', `skills/${id}/SKILL.md frontmatter 缺少 ${field}（Agent Skills 标准要求）`);
     }
+  }
+  if (/^when:/m.test(fm[1])) {
+    fail('skill-frontmatter', `skills/${id}/SKILL.md 使用了非标准键 when：应为 whenToUse（DSH 与 Claude 均不识别 when）`);
   }
   const nameMatch = fm[1].match(/^name:\s*(.*)$/m);
   if (nameMatch && nameMatch[1].trim() !== id) {
     fail('skill-name-mismatch', `skills/${id}/SKILL.md 的 name=${nameMatch[1].trim()} 与目录名不一致`);
+  }
+  if (!/^user-invocable:/m.test(fm[1])) {
+    note(`skills/${id}: 未声明 user-invocable，部分工具下用户无法直接点名调用`);
   }
 }
 // 文档里声明的 skill 表必须与实际一致
@@ -400,10 +416,13 @@ const PROJECT_SPECIFIC = [
   { re: /D:\\UE_\d/i, why: '本机绝对路径' },
 ];
 const SCAN_EXT = /\.(mjs|js|json|md|txt|yml|yaml|toml|cs|cpp|h|gd|ts)$/i;
+const SELF_EXEMPT = new Set([
+  'scripts/validate.mjs',   // 持有 PROJECT_SPECIFIC 的定义，会自匹配
+  'scripts/verify-dsh.mjs', // 持有"工具描述不得含具体项目耦合"的断言，同样会自匹配
+]);
 const selfFiles = walk(repo, { ignore: ['.git/', 'dist/', 'node_modules/'] }).files
   .filter((f) => SCAN_EXT.test(f))
-  // validate 自身持有这些模式的定义，跳过以免自报
-  .filter((f) => normalizeRel(f) !== 'scripts/validate.mjs');
+  .filter((f) => !SELF_EXEMPT.has(normalizeRel(f)));
 for (const rel of selfFiles) {
   const text = fs.readFileSync(path.join(repo, rel), 'utf8');
   for (const sig of PROJECT_SPECIFIC) {

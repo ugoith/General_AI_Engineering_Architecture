@@ -1,7 +1,8 @@
 ---
 name: bugfix-triage
 description: 系统性定位与修复缺陷，避免"改三次才修好"
-when: 出现缺陷、验证失败、线上问题、行为与预期不符
+user-invocable: true
+whenToUse: 出现缺陷、验证失败、线上问题、行为与预期不符
 ---
 
 # 缺陷定位与修复
