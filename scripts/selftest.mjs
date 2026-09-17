@@ -34,7 +34,7 @@ const PACKS = [
 ];
 
 const { main } = await import(pathToFileURL(path.join(cliLib, 'cli.mjs')).href);
-const { sha256, isFile, isDir, readJsonSafe, walk, normalizeRel } = await import(pathToFileURL(path.join(cliLib, 'fsx.mjs')).href);
+const { sha256, isFile, isDir, readJsonSafe, walk, normalizeRel, matchesAny } = await import(pathToFileURL(path.join(cliLib, 'fsx.mjs')).href);
 const { loadIndex } = await import(pathToFileURL(path.join(cliLib, 'indexer.mjs')).href);
 const { PACK_LIMITS } = await import(pathToFileURL(path.join(cliLib, 'limits.mjs')).href);
 
@@ -247,7 +247,16 @@ for (const packId of PACKS) {
     const impactTarget = (loadIndex(root).files.find((f) => f.importedBy?.length > 0) ?? { path: 'AGENTS.md' }).path;
     const impact = JSON.parse((await prun(root, ['review', '--impact', impactTarget, '--json'])).stdout);
     assert(Array.isArray(impact.dependents), 'review --impact 未返回 dependents');
-    assert(Array.isArray(impact.rules) && impact.rules.length >= 6, '影响矩阵规则少于 6 条');
+    // 未匹配到任何文件时也必须返回完整形状（早期会在读 impact.tests 时抛 TypeError）
+    const noHit = JSON.parse((await prun(root, ['review', '--impact', 'does/not/exist.ts', '--json'])).stdout);
+    assert(Array.isArray(noHit.tests) && noHit.changed.length === 0, 'review --impact 命中不到文件时返回形状不完整');
+    // 影响矩阵按判据分类：命中 / 未声明判据 / 不适用。不再把整张表打印出来让人自己挑。
+    assert(impact.impact && Array.isArray(impact.impact.applicable), 'review --impact 未返回分类后的影响矩阵');
+    assert(impact.impact.summary.total >= 6, '影响矩阵规则少于 6 条');
+    assert(impact.impact.summary.unknown === 0, `种子矩阵不应有"未声明判据"的规则（${impact.impact.summary.unknown} 条）`);
+    assert(impact.impact.applicable.length + impact.impact.skipped.length === impact.impact.summary.total,
+      '分类结果与规则总数不一致（有规则被漏掉）');
+    assert(impact.impact.applicable.every((r) => r.evidence.length > 0), '命中的规则必须给出判据');
     pass();
 
     begin(`${packId}: scale / patterns`);
@@ -324,6 +333,20 @@ for (const packId of PACKS) {
 async function extraTests() {
   const root = tmpDir('behaviour');
   try {
+    begin('行为：glob 语义（规则 scope / 影响判据 / .gitignore 共用同一套匹配）');
+    // 这条用例来自一个真实缺陷：`**/dir/**` 形式的模式曾经永远匹配不上。
+    // 它的后果是**静默失效**——规则 scope 写 `**/ui/**` 时该规则不会出现在任何检查里，
+    // 影响矩阵的 paths 判据、.gitignore 的 `**/Intermediate/**` 同样形同不存在。
+    assert(matchesAny('src/models/user.ts', ['**/models/**']), '`**/dir/**` 未匹配子路径');
+    assert(matchesAny('models/user.ts', ['**/models/**']), '`**/dir/**` 未匹配根下的同名目录');
+    assert(matchesAny('a/b/models/user.ts', ['**/models/**']), '`**/dir/**` 未匹配深层同名目录');
+    assert(!matchesAny('src/models2/user.ts', ['**/models/**']), '`**/dir/**` 误匹配了同前缀的兄弟目录');
+    assert(matchesAny('Binaries/x.pdb', ['Binaries/**']), '`dir/**` 未匹配目录内容');
+    assert(matchesAny('src/ui/button.tsx', ['src/ui/**']), '`dir/**` 未匹配（锚定路径）');
+    assert(matchesAny('src/a.ts', ['**/*.ts', '!src/b.ts']) || matchesAny('src/a.ts', ['**/*.ts']), '扩展名 glob 失效');
+    assert(!matchesAny('src/a.ts', ['**/*.tsx']), '扩展名 glob 误匹配');
+    pass();
+
     begin('行为：索引摘要机制真的省 token');
     await run(['init', root, '--pack', 'software-app-medium']);
     await prun(root, ['index']);
@@ -914,6 +937,21 @@ async function extraTests() {
     const afterEntry = loadIndex(closeRoot).files.find((f) => f.path === 'src/main.mjs');
     writeDigest(afterEntry.hash, 'CLI 入口与子命令分发（run 的返回值已改）');
     await prun(closeRoot, ['index', '--apply', digestFile]);
+
+    // 影响矩阵：src/main.mjs 命中 public-behavior-change（**/main.*），它要求同步 .ai/registry.json。
+    // 先把这一步做了，收尾才有资格通过——这正是"改了 A 忘了 B"的机械检查。
+    let closeMid = JSON.parse((await prun(closeRoot, ['review', '--task', '--json'])).stdout);
+    assert(closeMid.impact.applicable.some((r) => r.trigger === 'public-behavior-change'),
+      `未按判据命中 public-behavior-change：${JSON.stringify(closeMid.impact.applicable.map((r) => r.trigger))}`);
+    assert(closeMid.findings.some((f) => f.code === 'task-impact-not-updated'),
+      '未检出"影响矩阵要求的文件本次没有被改动"');
+    const regFile2 = path.join(closeRoot, '.ai', 'registry.json');
+    const regData2 = readJsonSafe(regFile2, null);
+    regData2.entities = [{
+      kind: 'api', name: 'cli-entry', file: 'src/main.mjs',
+      invariants: ['未知命令必须返回退出码 2'], tests: [], hash: afterEntry.hash.slice(0, 10),
+    }];
+    fs.writeFileSync(regFile2, JSON.stringify(regData2, null, 2), 'utf8');
 
     const packFile = path.join(closeRoot, '.ai', 'tasks', `${closePack.id}.md`);
     let packMd = fs.readFileSync(packFile, 'utf8');

@@ -3,31 +3,48 @@
   "rules": [
     {
       "trigger": "data-model-change",
+      "when": {
+        "entityKinds": ["data-model"],
+        "paths": ["**/models/**", "**/model/**", "**/entities/**", "**/entity/**", "**/schema/**", "**/*.schema.json"]
+      },
       "mustUpdate": ["{{aiDir}}/registry.json", "{{docsDir}}/architecture/data-model.md", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "api-contract-change",
+      "when": {
+        "entityKinds": ["api", "contract"],
+        "paths": ["**/api/**", "**/interfaces/**", "**/contracts/**", "**/dto/**"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/interfaces.md", "{{aiDir}}/registry.json", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "module-boundary-change",
+      "when": {
+        "entityKinds": ["module"],
+        "paths": ["**/module-layout*", "**/dependency-rules*", "**/overview*"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/overview.md", "{{aiDir}}/registry.json", "{{aiDir}}/decisions/README.md"],
       "adrRequired": true
     },
     {
       "trigger": "dependency-change",
+      "when": { "manifest": true },
       "mustUpdate": ["{{aiDir}}/decisions/README.md", "{{aiDir}}/constitution.md", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "build-tooling-change",
+      "when": { "build": true },
       "mustUpdate": ["{{docsDir}}/runbooks/local-dev.md", "{{aiDir}}/constitution.md", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "public-behavior-change",
+      "when": {
+        "paths": ["**/api/**", "**/cli/**", "**/cmd/**", "**/bin/**", "**/main.*"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/interfaces.md", "{{aiDir}}/registry.json", "{{aiDir}}/index/files.json"],
       "adrRequired": false
     }

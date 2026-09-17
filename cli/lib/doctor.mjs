@@ -11,6 +11,7 @@ import { loadIndex } from './indexer.mjs';
 import { auditRules } from './rules.mjs';
 import { detectFacts } from './facts.mjs';
 import { auditRegistry, reconcileRegistry } from './registry.mjs';
+import { closeTask } from './taskclose.mjs';
 
 const REQUIRED = [
   { path: 'AGENTS.md', why: 'AI 入口，缺失等于每次任务都要重新摸索项目' },
@@ -152,6 +153,22 @@ export function doctor(projectRoot) {
     push('info', 'framework-meta-missing', '.ai/framework.json', '缺少框架元数据：upgrade 无法判断哪些文件被本地改动过', 'node .ai/bin/ai-arch.mjs init --refresh');
   } else {
     push('ok', 'framework-meta', '.ai/framework.json', `pack=${frameworkMeta.packId} scale=${frameworkMeta.scaleLevel} framework=${frameworkMeta.frameworkVersion}`);
+  }
+
+  // 上一个任务是否收尾：直接复用 review --task 的对账，避免"上一次说完就忘"
+  // （没有任务包时不报——从没用过 task 的项目不该被念叨）
+  const close = closeTask(projectRoot, { index });
+  if (close.task) {
+    if (close.summary.ready) {
+      push('ok', 'task-closed', close.task.rel,
+        `上一次任务已收尾（${close.task.changedCount} 个文件变更已对账，${close.task.packedCount} 个文件核过 hash）`);
+    } else {
+      const codes = [...new Set(close.findings.filter((f) => f.severity !== 'info').map((f) => f.code))];
+      push('warn', 'task-unclosed', close.task.rel,
+        `上一次任务还有未处理的收尾项：${close.summary.error} 错误 / ${close.summary.warn} 警告`
+        + `${codes.length > 0 ? `（${codes.slice(0, 4).join('、')}${codes.length > 4 ? ' 等' : ''}）` : ''}`,
+        'node .ai/bin/ai-arch.mjs review --task');
+    }
   }
 
   // 危险文件检查

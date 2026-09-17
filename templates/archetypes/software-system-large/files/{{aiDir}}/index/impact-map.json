@@ -3,51 +3,82 @@
   "rules": [
     {
       "trigger": "data-model-change",
+      "when": {
+        "entityKinds": ["data-model"],
+        "paths": ["**/models/**", "**/model/**", "**/entities/**", "**/entity/**", "**/schema/**", "**/*.schema.json"]
+      },
       "mustUpdate": ["{{aiDir}}/registry.json", "{{docsDir}}/architecture/data-model.md", "{{docsDir}}/architecture/contracts/README.md", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "api-contract-change",
+      "when": {
+        "entityKinds": ["api", "contract"],
+        "paths": ["**/api/**", "**/interfaces/**", "**/contracts/**", "**/dto/**"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/interfaces.md", "{{docsDir}}/architecture/contracts/README.md", "{{aiDir}}/registry.json", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "module-boundary-change",
+      "when": {
+        "entityKinds": ["module"],
+        "paths": ["**/module-layout*", "**/dependency-rules*", "**/overview*"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/overview.md", "{{docsDir}}/architecture/dependency-rules.md", "{{aiDir}}/registry.json", "{{aiDir}}/decisions/README.md"],
       "adrRequired": true
     },
     {
       "trigger": "dependency-change",
+      "when": { "manifest": true },
       "mustUpdate": ["{{aiDir}}/decisions/README.md", "{{aiDir}}/constitution.md", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "build-tooling-change",
+      "when": { "build": true },
       "mustUpdate": ["{{docsDir}}/runbooks/local-dev.md", "{{aiDir}}/constitution.md", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "public-behavior-change",
+      "when": {
+        "paths": ["**/api/**", "**/cli/**", "**/cmd/**", "**/bin/**", "**/main.*"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/interfaces.md", "{{aiDir}}/registry.json", "{{aiDir}}/index/files.json"],
       "adrRequired": false
     },
     {
       "trigger": "contract-version-change",
+      "when": {
+        "entityKinds": ["contract"],
+        "paths": ["**/contracts/**", "**/version*"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/contracts/README.md", "{{docsDir}}/architecture/interfaces.md", "{{aiDir}}/decisions/README.md"],
       "adrRequired": true
     },
     {
       "trigger": "dependency-rule-change",
+      "when": {
+        "paths": ["**/dependency-rules*", "**/dependencies*"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/dependency-rules.md", "{{docsDir}}/architecture/overview.md", "{{aiDir}}/decisions/README.md"],
       "adrRequired": true
     },
     {
       "trigger": "performance-budget-change",
+      "when": {
+        "paths": ["**/performance-budget*", "**/perf/**", "**/benchmark*/**"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/performance-budget.md", "{{aiDir}}/decisions/README.md", "{{aiDir}}/index/files.json"],
       "adrRequired": true
     },
     {
       "trigger": "data-ownership-change",
+      "when": {
+        "entityKinds": ["data-model"],
+        "paths": ["**/ownership*", "**/data-ownership*"]
+      },
       "mustUpdate": ["{{docsDir}}/architecture/data-model.md", "{{docsDir}}/architecture/dependency-rules.md", "{{aiDir}}/registry.json"],
       "adrRequired": true
     }

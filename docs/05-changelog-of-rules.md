@@ -59,6 +59,35 @@
 - **影响**：`rules audit`、`doctor`（新增 `rules-not-propagated`）、手工编辑 `rules.json` 的项目会立刻看到该提示。
 - **替代机制**：不适用（新增检查，未删除旧规则）。
 
+## 2026-09-17 — 影响矩阵必须可判定，且同步更新必须被验收
+
+- **变更**：新增
+- **内容**：
+  - `.ai/index/impact-map.json` 的规则新增 `when` 字段（**触发判据**，机器求值）：`entityKinds[]`（注册表实体的 kind）/ `paths[]`（glob）/ `manifest`（依赖清单）/ `build`（构建与工具链配置）。种子矩阵的 6 条（L 级 10 条）全部补上判据。
+  - `review --impact` 的输出从"打印全部规则"改为三分类：**命中的**（附判据与 `mustUpdate`）、**未声明判据的**（明确说"无法判断是否适用"）、**不适用的**（只报数量）。
+  - `review --task` 新增 `task-impact-not-updated`（命中规则的 `mustUpdate` 文件在本次任务里没被改动过）、`task-impact-target-missing`、`task-impact-undeclared`；验收标准里"变更影响面已按 impact-map.json 更新"由 ⬜ 无法判定 升级为可判定的 ✅/❌。
+  - `rules add` 自动写入的影响矩阵 trigger 也带上 `when.paths`（取自规则的 `scope`）。
+  - `doctor` 新增 `task-closed` / `task-unclosed`：直接复用 `review --task` 的对账，让新会话一眼看到"上一次任务有没有收尾"。
+- **原因**：`04-design-notes.md` §5 把"变更时"列为规范的三个触发时机之一，但 `09-change-protocol.md` 第二步"按影响矩阵同步更新文档与注册表"此前**没有任何验收**——矩阵只是一张人读的表，`review --impact` 把 6~10 条规则全部打印出来让人自己挑。判定不了的条目等于没有条目，这条同样适用于影响矩阵。
+- **影响**：`.ai/index/impact-map.json` 格式（向后兼容：`when` 可选，但缺失会被报成"未声明判据"）、`review --impact` 的 `--json` 载荷（`rules` → `impact`，含分类结果）、`doctor` 输出、`docs/system/05-lifecycle.md`、`07-cli.md`。
+- **替代机制**：不适用（新增判据与验收，未删除旧规则）。
+
+## 2026-09-17 — 修复 glob 语义缺陷（`**/dir/**` 曾永远匹配不上）
+
+- **变更**：修改
+- **内容**：`cli/lib/fsx.mjs` 的 `matchesOne` 对以 `/**` 结尾的模式，此前无论前缀是否含通配符都只做字符串前缀比较，导致 `**/models/**`、`**/Intermediate/**` 这类写法永远匹配不上；改为"前缀含通配符时走 glob + 逐级前缀匹配"。
+- **原因**：这条缺陷**静默失效**且影响面很宽——规则的 `scope` 若写成 `**/ui/**`，该规则不会出现在任何检查里；影响矩阵的 `paths` 判据、`.gitignore` 的 `**/dir/**` 同样形同不存在。它是本轮做"影响判据"时被自测用例暴露出来的。
+- **影响**：`cli/lib/fsx.mjs`（索引忽略规则、规则 scope、影响判据共用）、`selftest` 新增 glob 语义用例。
+- **替代机制**：不适用（修正缺陷，未放宽任何检查）。
+
+## 2026-09-17 — 修复 `review --impact` 命中不到文件时崩溃
+
+- **变更**：修改
+- **内容**：`cli/lib/neighbors.mjs` 的 `impactOf` 在"没有任何文件匹配"时提前返回，但返回对象缺少 `tests`/`summary` 字段，调用方读 `impact.tests.length` 会抛 `TypeError`。现在返回形状与正常路径一致。
+- **原因**：`review --impact <新建文件或写错的路径>` 是很常见的用法（改动前查影响面，而新文件还没进索引），此时命令应该老实回答"未匹配到"，而不是崩掉。
+- **影响**：`cli/lib/neighbors.mjs`、`selftest` 新增"命中不到文件"用例。
+- **替代机制**：不适用（修正缺陷）。
+
 ## 2026-09-17 — 上下文预算阈值与实际一致（AGENTS.md 2100 → 2500 token）
 
 - **变更**：修改

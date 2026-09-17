@@ -40,7 +40,7 @@
 | `task "<描述>"` | 生成任务上下文包 | `.ai/tasks/<日期>-<slug>.md` |
 | `review --drift` | 规范漂移检测 | stdout / 退出码（`--strict`） |
 | `review --task [<id>]` | **任务闭环**：任务包里的计划 vs 实际（前提失效 / 摘要回写 / 注册表同步 / 证据填写） | stdout / 退出码（`--strict`） |
-| `review --impact <文件>` | 影响面分析 | 受影响文件、应跑测试、需同步的文档 |
+| `review --impact <文件>` | 影响面分析：受影响文件、应跑测试、**本次命中的影响矩阵规则**（按判据分类） | stdout |
 | `review --decisions` | 列出所有 ADR | stdout |
 | `scale` | 规模等级评估 | 等级结论 + 证据链 |
 | `scale --gaps` | 列出当前等级要求的缺失文件 | stdout |
@@ -342,6 +342,9 @@ node .ai/bin/ai-arch.mjs review --decisions
 | `task-index-stale` | warn | 索引里的 hash 还是旧的（本次改动没回写索引） | 下个任务会读到过期条目 |
 | `task-digest-stale` | warn | 索引已刷新，但语义摘要对应的仍是旧内容 | 摘要没重写，等于用旧结论继续判断 |
 | `task-entity-stale` | warn | 本次改到的契约，注册表里的 hash 未同步 | 后续 AI 会拿旧的不变量做判断（并列出该重跑哪些测试） |
+| `task-impact-not-updated` | warn | 命中的影响矩阵规则，其 `mustUpdate` 文件在本次任务里没有改动过 | "改了 A 忘了 B"是本框架要消灭的头号遗漏；不改就说明为什么（写进宪法例外或调整矩阵） |
+| `task-impact-target-missing` | info | `mustUpdate` 里的文件在本项目不存在 | 要么补建，要么按宪法例外写明本规模不需要 |
+| `task-impact-undeclared` | info | 矩阵里有规则没有声明触发判据（`when`） | 没有判据就只能靠人判断——判定不了的条目等于没有条目 |
 | `task-evidence-missing` | warn | 任务包"证据"一节仍是占位符 | 完成定义要求贴**真实命令输出**，不接受"应该没问题" |
 | `task-file-missing` / `task-file-unindexed` / `task-file-unhashed` | warn / info | 任务包列的文件没了、不在索引里、或当时没有 hash | 明说"对不了账"，不伪装成"没变" |
 | `task-scope-missing` / `task-result-missing` | info | 范围 / 结果两节未填 | 任务包同时是交接文档 |
@@ -349,10 +352,13 @@ node .ai/bin/ai-arch.mjs review --decisions
 
 输出还包含三段**不用自己声称**的内容：
 
-1. **验收标准**：`变更影响面已按 impact-map.json 更新`（注册表对账）与`索引摘要已同步`（hash 对账）由 CLI 判定，
-   人读文档是否更新判定不了，标为 ⬜ 而不是假装 ✅。
+1. **验收标准**：`变更影响面已按 impact-map.json 更新`（按判据命中的规则 × `mustUpdate` 文件的 mtime，与任务包创建时间比较）、`索引摘要已同步`（hash 对账）、`契约注册表已同步`（实体 hash 对账）三项都由 CLI 判定；
+   人读文档写得对不对判定不了，标 ⬜ 而不是假装 ✅。
 2. **应运行的测试**：来自注册表声明的 `tests` 与依赖反查。措辞是"应运行"——**本命令不能证明测试跑过**，判定不了的不做。
 3. **适用规则**：本次改动路径落在哪些规则范围内（带 `check`），逐条给结论；规则只在开工时出现一次是不够的。
+
+> `mustUpdate` 的核对用**文件的 mtime 与任务包创建时间**比较：只能回答"有没有动过"，回答不了"改得对不对"。
+> 因此报告里的措辞停在"本次没有改动"，不会升级成"没有正确更新"。`.ai/index/files.json` 由收尾第 2 步的 `index` 刷新，不参与这项判定（它的新鲜度由 `task-index-stale` 负责）。
 
 ## scale
 

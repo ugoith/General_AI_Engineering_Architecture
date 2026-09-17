@@ -23,6 +23,8 @@
 | `docs/system/04-context-discipline.md` 的预算 | `cli/lib/limits.mjs`、`templates/shared/context-discipline.md` | `validate.mjs` |
 | `cli/lib/taskpack.mjs`（任务包结构/必读项） | `docs/system/04-context-discipline.md`（必读项与固定成本）、`templates/base/files/{{aiDir}}/tasks/TEMPLATE.md`（手工模板）、`cli/lib/taskclose.mjs`（占位符常量必须同源） | `selftest` 的任务包用例 |
 | `cli/lib/taskclose.mjs`（收尾对账） | `docs/system/07-cli.md` 的 `review --task` 一节、`docs/system/05-lifecycle.md` 的收尾时机 | `selftest` 的"任务闭环"用例 |
+| `cli/lib/impactmap.mjs`（影响矩阵判据） | `docs/system/05-lifecycle.md` 的 `when` 字段表、`templates/base/files/{{aiDir}}/index/README.md`、两份 `impact-map.json` 种子 | `selftest` 的 review 用例（判据分类必须覆盖全部规则） |
+| `cli/lib/fsx.mjs` 的 glob 语义 | `docs/system/04-context-discipline.md`（忽略规则）、规则 `scope` 与影响判据都依赖它 | `selftest` 的 glob 语义用例 |
 | `cli/lib/rules.mjs`（规则的入库/传播/验收） | `docs/system/07-cli.md` 的 rules 一节、`cli/lib/doctor.mjs` 的规则检查 | `selftest` 的 rules 用例 |
 | `package.json` 的 `version` | 无（`init` 会写入生成项目的 `.ai/framework.json`） | `selftest` |
 | 新增 archetype 模板包 | `README.md` 的项目类型表、`scripts/selftest.mjs` 的 `PACKS`、`docs/02-adoption.md` | `validate.mjs` + `selftest` |

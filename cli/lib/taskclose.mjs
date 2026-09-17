@@ -20,11 +20,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { sha256, isFile, isDir, normalizeRel, matchesAny } from './fsx.mjs';
+import { sha256, isFile, isDir, normalizeRel, matchesAny, readJsonSafe } from './fsx.mjs';
 import { loadIndex } from './indexer.mjs';
 import { loadRegistry } from './registry.mjs';
 import { loadRules } from './rules.mjs';
 import { impactOf } from './neighbors.mjs';
+import { classifyImpactRules, impactTargetsState } from './impactmap.mjs';
 import { TASK_PLACEHOLDERS } from './taskpack.mjs';
 
 const MAX_LIST = 12;
@@ -243,9 +244,11 @@ export function closeTask(root, opts = {}) {
   const entities = Array.isArray(reg?.entities) ? reg.entities : [];
   const changedSet = new Set(changed.map((c) => c.path));
   const declaredTests = new Set();
+  let entitiesTouched = 0;
   for (const e of entities) {
     const rel = normalizeRel(String(e?.file ?? ''));
     if (!changedSet.has(rel)) continue;
+    entitiesTouched += 1;
     for (const t of Array.isArray(e.tests) ? e.tests : []) {
       if (typeof t === 'string' && t.trim()) declaredTests.add(t.trim());
     }
@@ -266,6 +269,65 @@ export function closeTask(root, opts = {}) {
   const tests = new Set(declaredTests);
   if (index && changed.length > 0) {
     for (const t of impactOf(index, changed.map((c) => c.path), { depth: 1, limit: 20 }).tests) tests.add(t);
+  }
+
+  // ---- 影响矩阵：本次改动命中了哪几条规则，它们要求的同步更新真的做了吗
+  // 这是变更协议里此前**唯一没有验收**的一步（"按影响矩阵同步更新文档与注册表"只是要求，没人核对）。
+  const impactMap = readJsonSafe(path.join(root, '.ai', 'index', 'impact-map.json'), null);
+  const impactClass = classifyImpactRules({
+    changed: changed.map((c) => c.path), impactMap, index, registry: reg,
+  });
+  const sinceMs = pack.createdAt ? Date.parse(pack.createdAt) : NaN;
+  const impact = {
+    summary: impactClass.summary,
+    applicable: [],
+    unknown: impactClass.unknown.map((r) => ({ trigger: r.trigger, evidence: r.evidence })),
+  };
+  const notUpdatedTargets = [];
+  const missingTargets = [];
+  for (const rule of impactClass.applicable) {
+    const state = impactTargetsState(root, rule, { sinceMs: Number.isFinite(sinceMs) ? sinceMs : null });
+    impact.applicable.push({
+      trigger: rule.trigger,
+      adrRequired: rule.adrRequired,
+      matched: rule.matched,
+      evidence: rule.evidence,
+      mustUpdate: rule.mustUpdate,
+      updated: state.updated.map((u) => u.target),
+      notUpdated: state.notUpdated.map((u) => u.target),
+      missing: state.missing.map((u) => u.target),
+      skipped: state.skipped,
+    });
+    for (const item of state.notUpdated) {
+      notUpdatedTargets.push({ trigger: rule.trigger, target: item.target });
+      findings.push(sev(
+        'warn', 'task-impact-not-updated', `${rule.trigger} → ${item.target}`,
+        `本次改动命中了影响矩阵规则 ${rule.trigger}，它要求同步更新 ${item.target}，但该文件在任务包创建之后没有被改动过`,
+        `要么现在补上，要么说明为什么不需要（写进 .ai/constitution.md 的"本项目的例外"，或调整 .ai/index/impact-map.json 的 mustUpdate）`,
+      ));
+    }
+    for (const item of state.missing) {
+      missingTargets.push({ trigger: rule.trigger, target: item.target });
+    }
+  }
+  for (const item of missingTargets.slice(0, 3)) {
+    findings.push(sev(
+      'info', 'task-impact-target-missing', `${item.trigger} → ${item.target}`,
+      '影响矩阵要求同步更新这个文件，但项目里没有它',
+      '要么按骨架补上，要么在宪法"本项目的例外"里写明本规模不需要——不要静默忽略',
+    ));
+  }
+  if (missingTargets.length > 3) {
+    findings.push(sev('info', 'task-impact-target-missing', '.ai/index/impact-map.json',
+      `另有 ${missingTargets.length - 3} 个 mustUpdate 目标不存在（已省略）`, '同上的两种处理方式'));
+  }
+  if (impact.unknown.length > 0) {
+    findings.push(sev(
+      'info', 'task-impact-undeclared', '.ai/index/impact-map.json',
+      `有 ${impact.unknown.length} 条矩阵规则没有声明触发判据（when）：${impact.unknown.slice(0, 4).map((r) => r.trigger).join('、')}`
+        + `${impact.unknown.length > 4 ? ' 等' : ''}——本次无法判断它们是否适用`,
+      '给这些 trigger 补 when（支持 entityKinds / paths / manifest / build，见 docs/system/05-lifecycle.md）',
+    ));
   }
 
   // ---- 4. 任务包自己填完了吗（机械可判定的部分）
@@ -295,18 +357,30 @@ export function closeTask(root, opts = {}) {
   // ---- 机械验收项：CLI 自己判定，不要求人声称
   const staleIndex = findings.filter((f) => f.code === 'task-index-stale' || f.code === 'task-digest-stale').length;
   const staleEntity = findings.filter((f) => f.code === 'task-entity-stale').length;
+  const impactMissed = notUpdatedTargets.length;
   const checklist = [
     {
       item: '变更影响面已按 .ai/index/impact-map.json 更新',
-      verdict: staleEntity === 0 ? 'unverifiable' : 'fail',
-      note: staleEntity === 0
-        ? '注册表未发现与本次改动相关的未同步项（影响矩阵里的人读文档无法机械判定）'
-        : `${staleEntity} 个契约实体的 hash 未同步`,
+      verdict: impactMissed === 0 ? 'pass' : 'fail',
+      note: impactMissed === 0
+        ? (impactClass.applicable.length === 0
+          ? `本次改动没有命中任何矩阵规则${impact.unknown.length > 0 ? `（另有 ${impact.unknown.length} 条未声明判据，无法判定）` : ''}`
+          : `命中的 ${impactClass.applicable.length} 条规则，其 mustUpdate 文件都已改动过（改得对不对判定不了）`)
+        : `${impactMissed} 个矩阵要求同步的文件本次没有改动`,
     },
     {
       item: '索引摘要已同步',
       verdict: staleIndex === 0 ? 'pass' : 'fail',
       note: staleIndex === 0 ? '任务包列出的文件，索引与摘要都是当前内容' : `${staleIndex} 个文件的索引/摘要是旧的`,
+    },
+    {
+      item: '契约注册表已同步',
+      verdict: staleEntity === 0 ? 'pass' : 'fail',
+      note: entitiesTouched === 0
+        ? `本次改动没有触及任何已登记的契约实体（注册表共 ${entities.length} 条）`
+        : (staleEntity === 0
+          ? `${entitiesTouched} 条涉及的实体，注册表 hash 都已同步`
+          : `${staleEntity} 个契约实体的 hash 未同步`),
     },
   ];
 
@@ -327,6 +401,7 @@ export function closeTask(root, opts = {}) {
     changed: changed.slice(0, limit),
     tests: [...tests].slice(0, limit),
     rulesToCheck,
+    impact,
     checklist,
     findings,
     summary: summarize(findings, packed.length, changed.length),
@@ -376,6 +451,27 @@ export function renderTaskClose(report) {
       lines.push(`        ${f.message}`);
       lines.push(`        → ${f.action}`);
     }
+  }
+  lines.push('');
+
+  lines.push('  影响矩阵（.ai/index/impact-map.json）——本次改动命中了哪几条：');
+  const imp = report.impact ?? { applicable: [], unknown: [], summary: {} };
+  if (imp.applicable.length === 0) {
+    lines.push(`    （没有命中任何规则；矩阵共 ${imp.summary?.total ?? 0} 条，其中未声明判据 ${imp.summary?.unknown ?? 0} 条）`);
+  }
+  for (const rule of imp.applicable) {
+    lines.push(`    ✅ ${rule.trigger}${rule.adrRequired ? '（需 ADR）' : ''}`);
+    for (const e of rule.evidence ?? []) lines.push(`        判据：${e}`);
+    if (rule.mustUpdate.length > 0) {
+      lines.push(`        要求同步：${rule.mustUpdate.join('、')}`);
+      if (rule.updated.length > 0) lines.push(`        已改动：${rule.updated.join('、')}`);
+      if (rule.notUpdated.length > 0) lines.push(`        **未改动：${rule.notUpdated.join('、')}**`);
+      if (rule.missing.length > 0) lines.push(`        本项目没有：${rule.missing.join('、')}`);
+    }
+  }
+  if (imp.unknown.length > 0) {
+    lines.push(`    ⬜ 未声明判据 ${imp.unknown.length} 条：${imp.unknown.slice(0, 5).map((r) => r.trigger).join('、')}`
+      + `${imp.unknown.length > 5 ? ' 等' : ''}（无法判断是否适用）`);
   }
   lines.push('');
 

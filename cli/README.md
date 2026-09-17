@@ -27,6 +27,7 @@
 | `lib/neighbors.mjs` | 依赖邻域与影响面计算 | 只基于静态 import；间接依赖需人工补进影响矩阵 |
 | `lib/taskpack.mjs` | 任务上下文包：打分、预算、决策（读源码/读摘要） | 超预算的文件必须列入 `dropped`，不得静默省略；条件必读项的占位符常量与 `taskclose.mjs` 同源 |
 | `lib/taskclose.mjs` | 任务闭环对账（`review --task`）：计划 vs 实际、前提失效、摘要/注册表同步、任务包自填检查 | **只重新 hash 任务包列过的文件**，不做全树扫描；不声称"测试跑过" |
+| `lib/impactmap.mjs` | 影响矩阵判据求值：`when`（entityKinds/paths/manifest/build）→ 命中/未声明判据/不适用；`mustUpdate` 的 mtime 对账 | **没有 `when` 的规则不猜**，报"无法判断是否适用"；mtime 只回答"有没有动过" |
 | `lib/review.mjs` | 漂移检测（摘要过期、文档断链、决策缺失、预算超限） | 只报机械可判定项，不猜架构问题 |
 | `lib/doctor.mjs` | 项目健康检查 | 必需文件缺失必须是 error 级 |
 | `lib/limits.mjs` | **所有阈值集中在此** | 每个数字必须能在 `docs/system/` 找到出处 |
@@ -37,7 +38,8 @@
 
 ```
 ai-arch.mjs → cli.mjs → { args, report, fsx, framework, pack, scaffold,
-                          indexer, taskpack, taskclose, review, doctor, neighbors, patterns, limits }
+                          indexer, taskpack, taskclose, impactmap, review, doctor,
+                          neighbors, patterns, limits }
 fsx/framework 不依赖任何业务模块；render 不依赖 fsx；pack → render + fsx + framework
 ```
 

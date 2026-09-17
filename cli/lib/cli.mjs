@@ -32,7 +32,8 @@ import {
 import {
   loadRules, addRule, auditRules, rulesDigest, nextRuleId,
 } from './rules.mjs';
-import { auditRegistry, reconcileRegistry } from './registry.mjs';
+import { auditRegistry, reconcileRegistry, loadRegistry } from './registry.mjs';
+import { classifyImpactRules } from './impactmap.mjs';
 
 const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
 
@@ -509,6 +510,9 @@ function propagateRule(root, rule) {
   const scopeHint = rule.scope && rule.scope !== '**' ? `（仅适用于 ${rule.scope}）` : '';
   map.rules.push({
     trigger,
+    // 判据直接复用规则的作用范围：scope 就是"这条规则在哪些路径上成立"，
+    // 于是"本次改动是否命中该规则"从人判断变成机械判定（见 cli/lib/impactmap.mjs）。
+    when: { paths: [rule.scope && rule.scope !== '**' ? rule.scope : '**'] },
     mustUpdate: [],
     adrRequired: false,
     note: `新增/修改代码时复查规则 ${rule.id}${scopeHint}：${rule.statement}；判定方式（${rule.enforcement}）：${rule.check}`,
@@ -934,7 +938,15 @@ function cmdReview(root, args, flags) {
     const changed = impactTarget.split(',').map((s) => s.trim()).filter(Boolean);
     const impact = impactOf(index, changed, { depth: flagNumber(flags, 'depth', 2), limit: 60 });
     const impactMap = readJsonSafe(path.join(root, '.ai', 'index', 'impact-map.json'), null);
-    const result = { ...impact, rules: impactMap?.rules ?? [] };
+    // 影响矩阵从"全部打印"改为"按判据分类"：把命中的、判不了的、不适用的分开，
+    // 而不是让人自己从 6~10 条规则里挑（见 cli/lib/impactmap.mjs）。
+    const impactClass = classifyImpactRules({
+      changed: [...new Set([...impact.changed, ...changed])],
+      impactMap,
+      index,
+      registry: loadRegistry(root),
+    });
+    const result = { ...impact, impact: impactClass };
 
     if (flagBool(flags, 'json')) {
       process.stdout.write(JSON.stringify(result, null, 2) + '\n');
@@ -954,10 +966,24 @@ function cmdReview(root, args, flags) {
       for (const t of impact.tests) process.stdout.write(`  - ${t}\n`);
     }
     if (impactMap?.rules) {
-      process.stdout.write('\n影响矩阵要求的同步更新（.ai/index/impact-map.json）：\n');
-      for (const rule of impactMap.rules) {
-        process.stdout.write(`  - ${rule.trigger} → ${(rule.mustUpdate ?? []).join(', ')}${rule.adrRequired ? '（需 ADR）' : ''}\n`);
+      const s = impactClass.summary;
+      process.stdout.write('\n影响矩阵（.ai/index/impact-map.json）——本次改动命中：\n');
+      if (impactClass.applicable.length === 0) {
+        process.stdout.write(`  （没有命中任何规则；矩阵共 ${s.total} 条，未声明判据 ${s.unknown} 条）\n`);
       }
+      for (const rule of impactClass.applicable) {
+        const adr = rule.adrRequired ? '（需 ADR）' : '';
+        process.stdout.write(`  ✅ ${rule.trigger}${adr}\n`);
+        for (const e of rule.evidence) process.stdout.write(`      判据：${e}\n`);
+        process.stdout.write(`      必须同步更新：${rule.mustUpdate.length > 0 ? rule.mustUpdate.join('、') : '（无具体文件；按 note 复查）'}\n`);
+      }
+      if (impactClass.unknown.length > 0) {
+        process.stdout.write(`  ⬜ 未声明判据 ${impactClass.unknown.length} 条：`
+          + `${impactClass.unknown.slice(0, 6).map((r) => r.trigger).join('、')}`
+          + `${impactClass.unknown.length > 6 ? ' 等' : ''}（无法判断是否适用；给它们补 when 即可纳入判定）\n`);
+      }
+      if (s.skipped > 0) process.stdout.write(`  · 其余 ${s.skipped} 条本次不适用（声明的判据都不匹配）\n`);
+      process.stdout.write('  改动完成后用 `review --task` 核对 mustUpdate 是否真的同步了。\n');
     }
     return 0;
   }

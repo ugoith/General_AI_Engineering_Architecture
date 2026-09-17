@@ -31,7 +31,15 @@ export function impactOf(index, changed, opts = {}) {
   const graph = buildGraph(index);
   const changedSet = new Set();
   for (const spec of changed) for (const hit of resolveTargets(graph, spec)) changedSet.add(hit);
-  if (changedSet.size === 0) return { changed: [], dependents: [], depth, hits: [] };
+  // 返回形状必须与正常路径一致：早期这里只返回 changed/dependents/depth，
+  // 于是 `review --impact <索引里没有的路径>`（新建文件、写错路径都很常见）会在读取 impact.tests 时抛 TypeError，
+  // 而不是老老实实报"未匹配到"。
+  if (changedSet.size === 0) {
+    return {
+      changed: [], dependents: [], depth, tests: [],
+      summary: { changedCount: 0, dependentCount: 0, testCount: 0 },
+    };
+  }
 
   const levels = new Map();
   for (const c of changedSet) levels.set(c, 0);

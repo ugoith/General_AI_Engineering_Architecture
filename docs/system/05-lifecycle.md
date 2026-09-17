@@ -7,7 +7,7 @@
 
 | 时机 | 触发者 | 动作 | 自动化程度 |
 |---|---|---|---|
-| **变更时** | 写代码的人/AI | 按影响矩阵同步文档与索引 | 半自动（`review --impact` 给出清单） |
+| **变更时** | 写代码的人/AI | 按影响矩阵同步文档与索引 | **全自动**：`review --impact` 按判据报出命中的规则；`review --task` 核对 `mustUpdate` 是否真的改了 |
 | **任务收尾时** | 完成一次任务 | 计划 vs 实际对账、回写摘要、同步注册表 | 全自动（`review --task` 对账任务包记录的 hash） |
 | **提交前** | 每次提交 | 漂移检测、上下文预算检查 | 全自动（`review --drift`） |
 | **定期** | 里程碑/季度/规模变化 | 架构评审，产出 ADR 或整改清单 | 半自动（`review --drift` + 评审清单） |
@@ -22,16 +22,25 @@
 
 ## 二、变更时：影响矩阵
 
-`.ai/index/impact-map.json` 是机器可读的影响矩阵。种子内容（`init` 生成）：
+`.ai/index/impact-map.json` 是机器可读的影响矩阵。每条规则有四个字段：
 
-| 触发 | 必须同步更新 | 需要 ADR |
-|---|---|---|
-| `data-model-change` | `.ai/registry.json`、`docs/architecture/data-model.md` | 是 |
-| `api-contract-change` | `.ai/registry.json`、`docs/architecture/interfaces.md`、契约测试 | 是 |
-| `module-boundary-change` | `docs/architecture/overview.md`、依赖规则文件 | 是 |
-| `dependency-change` | `.ai/constitution.md`（技术栈一节）、`.ai/decisions/` | 是 |
-| `build-tooling-change` | `docs/runbooks/local-dev.md`、CI 配置说明 | 否 |
-| `public-behavior-change` | `CHANGELOG.md`、README 用法一节 | 否 |
+| 字段 | 含义 |
+|---|---|
+| `trigger` | 变更类型名（`data-model-change` 等），可自定义 |
+| `when` | **触发判据**（机器求值）：`entityKinds[]` / `paths[]` / `manifest` / `build`，任一匹配即算命中 |
+| `mustUpdate[]` | 命中后必须同步更新的文件 |
+| `adrRequired` | 是否必须先写 ADR |
+
+种子内容（`init` 生成）：
+
+| 触发 | 判据（`when`） | 必须同步更新 | 需要 ADR |
+|---|---|---|---|
+| `data-model-change` | 注册表 `data-model` 实体 / `**/models/**` 等路径 | `.ai/registry.json`、`docs/architecture/data-model.md` | 是 |
+| `api-contract-change` | 注册表 `api`/`contract` 实体 / `**/api/**` 等路径 | `.ai/registry.json`、`docs/architecture/interfaces.md`、契约测试 | 是 |
+| `module-boundary-change` | 注册表 `module` 实体 / 模块与依赖规则文档 | `docs/architecture/overview.md`、依赖规则文件 | 是 |
+| `dependency-change` | 依赖清单（`package.json`、`*.csproj`、`pyproject.toml` …） | `.ai/constitution.md`（技术栈一节）、`.ai/decisions/` | 是 |
+| `build-tooling-change` | 构建与工具链配置（`tsconfig`、`Makefile`、CI、`*.Build.cs` …） | `docs/runbooks/local-dev.md`、CI 配置说明 | 否 |
+| `public-behavior-change` | 公开入口路径（`**/api/**`、`**/cli/**`、`**/main.*` …） | `CHANGELOG.md`、README 用法一节 | 否 |
 
 使用方式：
 
@@ -39,7 +48,10 @@
 node .ai/bin/ai-arch.mjs review --impact src/auth/token.ts
 ```
 
-输出：受影响文件（按依赖深度）、应运行的测试、以及影响矩阵要求的同步更新项。
+输出把规则分成三类——**命中的**（附判据与 `mustUpdate`）、**未声明判据的**（明确说"无法判断是否适用"，而不是列出来让人自己挑）、**不适用的**（只报数量）。
+改动完成后 `review --task` 会核对：命中的规则，其 `mustUpdate` 文件在本次任务里是否真的被改动过（没改报 `task-impact-not-updated`）。
+
+**为什么要有 `when`**：没有它，影响矩阵就只是一张人读的表——`review --impact` 只能把全部规则打印出来，"这次命中了哪几条"完全靠人判断。而**判断不了的条目等于没有条目**（与规则集同一把尺子：没有判据的规则会被报成"未声明判据"）。自己加的 trigger 请一并补 `when`；`rules add` 写入的 trigger 会自动带上 `when.paths`（取自规则的作用范围）。
 
 **重要**：影响矩阵是**项目资产**，必须随项目演进修改。当发现"改了 A 却没人想到要改 B"时，正确动作是**往矩阵里加一条规则**，而不是提醒大家小心。
 

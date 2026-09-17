@@ -199,7 +199,21 @@ function matchesOne(p, pattern) {
   }
   if (pattern.endsWith('/**')) {
     const base = pattern.slice(0, -3);
-    return p === base || p.startsWith(base + '/');
+    // 无通配符的目录前缀：直接按字符串前缀判断（快路径）。
+    if (!base.includes('*') && !base.includes('{')) {
+      return p === base || p.startsWith(base + '/');
+    }
+    // 带通配符的目录前缀（如 `**/models/**`）：**必须走 glob**。
+    // 早期实现无论 base 有没有通配符都做 `p.startsWith(base + '/')`，于是 `**/dir/**` 这种写法
+    // 永远匹配不上——而它是最自然的写法之一。后果是静默失效：规则 scope、影响矩阵判据、
+    // .gitignore 里的 `**/Intermediate/**` 全部形同不存在（见 selftest 的 glob 语义用例）。
+    const re = globToRegExp(base);
+    if (re.test(p)) return true;
+    const segments = p.split('/');
+    for (let i = 1; i <= segments.length; i += 1) {
+      if (re.test(segments.slice(0, i).join('/'))) return true;
+    }
+    return false;
   }
   if (!pattern.includes('*') && !pattern.includes('{')) {
     return p === normalizeRel(pattern);
