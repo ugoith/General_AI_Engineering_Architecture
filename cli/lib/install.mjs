@@ -28,13 +28,19 @@ export const ADAPTER_MARK = (agent) =>
  * 字段含义：
  *  - `detectDir`：**用于探测项目是否在用这个 agent** 的目录（必须是 agent 的根目录，且不能是嵌套子目录，
  *     否则"目录已存在才写"的判定永远为假——真实故障：`.cursor/rules` 这种子目录导致探测失败）。
- *  - `file`：实际写入的相对路径（agent 约定的规则文件位置）。
- *  - `skillsDir`：该 agent 的**技能根目录**（省略表示它不通过目录发现技能）。
- *     依据：Claude Code 扫描项目/插件的 `skills/`；DSH 的 `dsh-skill-filesystem` 扫描项目 `.dsh/skills/`，
- *     且**不支持嵌套 SKILL.md**（技能目录必须直接位于根下）。
+ *  - `file`：实际写入的相对路径（agent 约定的规则/上下文文件位置）。
+ *  - `skillsDirs`：该 agent 的**技能根目录**列表（省略表示它不通过目录发现技能）。
+ *     依据（逐个核实过）：
+ *       · Claude Code 扫描项目/插件的 `skills/`
+ *       · DSH 的 `dsh-skill-filesystem` 扫描项目 `.dsh/skills/`
+ *       · Cursor 的 skill 是仓库级 `.cursor/skills/`，**并且也发现 `.agents/skills/`**
+ *       · 以上三家都要求**目录 bundle**（`<name>/SKILL.md`），且**不支持嵌套** SKILL.md
+ *  - `pathScopedRules`：该 agent 是否支持"按文件 glob 生效的路径级指令"。
+ *     Copilot 的 `.github/instructions/<name>.instructions.md` 用 `applyTo` frontmatter；
+ *     Cursor 的 `.cursor/rules/*.mdc` 用 `globs`。只有声明了 `globs` 的 skill 才生成，避免噪音。
  *  - `body`：指针正文（只有"去读 AGENTS.md 与 .ai/"的指示，不复制知识）。
  *
- * 注意：刻意**不**生成 `.claude/settings.json`——那属于用户的 agent 配置，框架不应改。
+ * 注意：刻意**不**生成 `.claude/settings.json`、`.cursor/mcp.json` 这类用户配置——那属于用户，框架不应改。
  */
 export const AGENT_ADAPTERS = [
   {
@@ -42,7 +48,7 @@ export const AGENT_ADAPTERS = [
     label: 'Claude Code',
     detectDir: '.claude',
     file: '.claude/CLAUDE.md',
-    skillsDir: '.claude/skills',
+    skillsDirs: ['.claude/skills'],
     body: () => `# CLAUDE.md
 
 本项目的唯一 AI 入口是仓库根目录的 [\`AGENTS.md\`](../AGENTS.md)。请先完整读取它，再按其"工作路由"表决定后续读哪些文件。
@@ -57,7 +63,7 @@ export const AGENT_ADAPTERS = [
     label: 'DeepSeek Harness',
     detectDir: '.dsh',
     file: '.dsh/AGENTS.md',
-    skillsDir: '.dsh/skills',
+    skillsDirs: ['.dsh/skills'],
     body: () => `# AGENTS.md（DeepSeek Harness 指针）
 
 本项目的 AI 入口是仓库根的 \`AGENTS.md\`，请先完整读它。
@@ -73,6 +79,9 @@ export const AGENT_ADAPTERS = [
     label: 'Cursor',
     detectDir: '.cursor',
     file: '.cursor/rules/ai-arch.mdc',
+    // Cursor 既认自己的 .cursor/skills，也认跨工具约定的 .agents/skills；两个都写，覆盖率更高
+    skillsDirs: ['.cursor/skills', '.agents/skills'],
+    pathScopedRules: 'cursor',
     body: () => `---
 description: 项目 AI 工程架构入口（指针）
 alwaysApply: true
@@ -107,6 +116,7 @@ alwaysApply: true
     label: 'GitHub Copilot',
     detectDir: '.github',
     file: '.github/copilot-instructions.md',
+    pathScopedRules: 'copilot',
     body: () => `# Copilot 指令（指针）
 
 本项目的 AI 入口是仓库根的 \`AGENTS.md\`，请先读它再动手。
@@ -114,6 +124,22 @@ alwaysApply: true
 - 任务开始前先跑 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\`，按它给出的读取清单读文件，不要全仓库搜索。
 - 项目红线、验证命令：\`.ai/constitution.md\`；索引说明：\`.ai/index/README.md\`。
 - 项目规则集：\`.ai/rules.json\`（含每条规则的判定方式）。
+
+> 针对特定文件类型的补充指令在 \`.github/instructions/\`（按 \`applyTo\` glob 自动生效）。
+`,
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini CLI',
+    detectDir: '.gemini',
+    file: '.gemini/GEMINI.md',
+    extensionsDir: '.gemini/extensions/ai-engineering-arch',
+    body: () => `# GEMINI.md（Gemini CLI 指针）
+
+本项目的 AI 入口是仓库根的 \`AGENTS.md\`，请先完整读取它。
+
+- 索引与任务包在 \`.ai/\`：\`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 生成读取清单。
+- 规则集 \`.ai/rules.json\`；事实与能力 \`.ai/project-facts.json\`；红线与验证命令 \`.ai/constitution.md\`。
 `,
   },
   {
@@ -143,6 +169,14 @@ alwaysApply: true
 `,
   },
 ];
+
+/** 读取 skill 的 frontmatter 字段（供路径级规则生成使用）。 */
+export function skillFrontmatter(body) {
+  const fm = body.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!fm) return {};
+  const pick = (key) => fm[1].match(new RegExp(`^${key}:\\s*(.*)$`, 'm'))?.[1]?.trim().replace(/^["']|["']$/g, '') ?? null;
+  return { name: pick('name'), description: pick('description'), whenToUse: pick('whenToUse'), globs: pick('globs') };
+}
 
 /** 探测项目里已存在的 agent **目录名**（给提示词用）。 */
 export function detectAgents(root) {
@@ -184,6 +218,8 @@ export function writeAgentAdapters(root, {
   const skipped = [];
   const refused = [];
   const skillsWritten = [];
+  const scopedWritten = [];
+  const extensionsWritten = [];
 
   for (const agent of targets) {
     const abs = path.join(root, agent.file);
@@ -213,24 +249,139 @@ export function writeAgentAdapters(root, {
     }
 
     // 技能要装进**该 agent 自己的技能根目录**才算被它发现：
-    // 放在 .ai/skills/ 只是"框架内的副本"，Claude/DSH 都不会去那里找。
-    if (!agent.skillsDir) continue;
-    for (const id of wantedSkills) {
-      const src = path.join(frameworkSkillsDir(), id, 'SKILL.md');
-      if (!isFile(src)) continue;
-      const dest = path.join(root, agent.skillsDir, id, 'SKILL.md');
-      const rel = normalizeRel(path.relative(root, dest));
-      if (isFile(dest) && !forceSkills) { skipped.push(rel); continue; }
-      if (!dryRun) {
-        ensureDir(path.dirname(dest));
-        fs.copyFileSync(src, dest);
+    // 放在 .ai/skills/ 只是"框架内的副本"，各 agent 都不会去那里找。
+    // 一个 agent 可能有多个被发现的技能根（例如 Cursor 同时认 .cursor/skills 与 .agents/skills）。
+    for (const skillsRoot of agent.skillsDirs ?? []) {
+      for (const id of wantedSkills) {
+        const src = path.join(frameworkSkillsDir(), id, 'SKILL.md');
+        if (!isFile(src)) continue;
+        const dest = path.join(root, skillsRoot, id, 'SKILL.md');
+        const rel = normalizeRel(path.relative(root, dest));
+        if (isFile(dest) && !forceSkills) { skipped.push(rel); continue; }
+        if (!dryRun) {
+          ensureDir(path.dirname(dest));
+          fs.copyFileSync(src, dest);
+        }
+        skillsWritten.push(rel);
       }
-      skillsWritten.push(rel);
+    }
+
+    // 路径级规则：只在处理匹配文件的上下文里注入，避免把无关技能塞进每次对话。
+    // 只对**声明了 globs 的 skill** 生成（通用型技能没有 globs，本就该全局可用）。
+    if (agent.pathScopedRules && !dryRun) {
+      for (const rel of pathScopedRuleFiles(root, agent, wantedSkills)) {
+        scopedWritten.push(rel);
+      }
+    } else if (agent.pathScopedRules && dryRun) {
+      for (const rel of pathScopedRuleFiles(root, agent, wantedSkills, { dryRun: true })) {
+        scopedWritten.push(rel);
+      }
+    }
+
+    // Gemini CLI 扩展：它把"扩展上下文文件"合并进会话上下文，
+    // 因此需要一个 gemini-extension.json（name 必须等于目录名）+ contextFileName。
+    if (agent.extensionsDir) {
+      const manifest = path.join(root, agent.extensionsDir, 'gemini-extension.json');
+      const contextFile = path.join(root, agent.extensionsDir, 'GEMINI.md');
+      const manifestBody = JSON.stringify({
+        name: path.basename(agent.extensionsDir),
+        version: frameworkVersion(),
+        contextFileName: 'GEMINI.md',
+      }, null, 2) + '\n';
+      const contextBody = `# 项目 AI 工程架构（Gemini CLI 扩展上下文）
+
+> 本文件由框架生成，作用是把项目入口指给 Gemini：**请先读仓库根的 \`AGENTS.md\`**。
+
+- 索引与任务包在 \`.ai/\`：\`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 生成读取清单，按清单读文件。
+- 规则集 \`.ai/rules.json\`；事实与可用能力 \`.ai/project-facts.json\`；红线与验证命令 \`.ai/constitution.md\`。
+`;
+      if (!dryRun) {
+        ensureDir(path.dirname(manifest));
+        fs.writeFileSync(manifest, manifestBody, 'utf8');
+        fs.writeFileSync(contextFile, contextBody, 'utf8');
+      }
+      extensionsWritten.push(normalizeRel(path.relative(root, manifest)));
+      extensionsWritten.push(normalizeRel(path.relative(root, contextFile)));
     }
   }
   return {
-    written, skipped, refused, skills: skillsWritten, detected: detectAgents(root),
+    written,
+    skipped,
+    refused,
+    skills: skillsWritten,
+    pathScopedRules: scopedWritten,
+    extensions: extensionsWritten,
+    detected: detectAgents(root),
   };
+}
+
+/**
+ * 生成路径级规则文件，返回写入的相对路径列表。
+ *
+ * 两家的字段不同（都不是我们的发明，均来自官方文档）：
+ *  - Copilot：`.github/instructions/<name>.instructions.md`，frontmatter 用 `applyTo`（逗号分隔 glob）
+ *  - Cursor ：`.cursor/rules/<name>.mdc`，frontmatter 用 `description`/`globs`/`alwaysApply`
+ */
+export function pathScopedRuleFiles(root, agent, skillIds, { dryRun = false } = {}) {
+  const out = [];
+  for (const id of skillIds) {
+    const src = path.join(frameworkSkillsDir(), id, 'SKILL.md');
+    if (!isFile(src)) continue;
+    const text = fs.readFileSync(src, 'utf8');
+    const fm = skillFrontmatter(text);
+    if (!fm.globs) continue; // 通用型 skill：不做路径级注入
+
+    if (agent.pathScopedRules === 'copilot') {
+      const rel = `.github/instructions/${id}.instructions.md`;
+      const body = `---
+applyTo: "${fm.globs}"
+---
+
+# ${fm.name ?? id}
+
+> 来源：AI 工程架构框架的 skill \`${id}\`（本文件是路径级投影）。
+> 完整内容与反例见项目内 \`.ai/skills/${id}/SKILL.md\`；不要在此复制正文，避免两处真相。
+
+**何时适用**：${fm.whenToUse ?? '（见原 skill）'}
+
+**要做什么**：改动匹配上述 glob 的文件前，先读 \`.ai/skills/${id}/SKILL.md\` 并按其步骤执行。
+项目规则集在 \`.ai/rules.json\`；接任务前先用 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 拿读取清单。
+`;
+      if (!dryRun) {
+        const abs = path.join(root, rel);
+        ensureDir(path.dirname(abs));
+        fs.writeFileSync(abs, body, 'utf8');
+      }
+      out.push(rel);
+      continue;
+    }
+
+    if (agent.pathScopedRules === 'cursor') {
+      const rel = `.cursor/rules/ai-arch-${id}.mdc`;
+      const body = `---
+description: "AI 工程架构 skill：${fm.description ?? id}"
+globs: "${fm.globs}"
+alwaysApply: false
+---
+
+# ${fm.name ?? id}
+
+> 来源：AI 工程架构框架的 skill \`${id}\`（本文件是路径级投影，按 glob 自动附着）。
+> 完整内容见 \`.ai/skills/${id}/SKILL.md\`；不要在此复制正文，避免两处真相。
+
+**何时适用**：${fm.whenToUse ?? '（见原 skill）'}
+
+**要做什么**：按 \`.ai/skills/${id}/SKILL.md\` 的步骤执行；项目规则集在 \`.ai/rules.json\`。
+`;
+      if (!dryRun) {
+        const abs = path.join(root, rel);
+        ensureDir(path.dirname(abs));
+        fs.writeFileSync(abs, body, 'utf8');
+      }
+      out.push(rel);
+    }
+  }
+  return out;
 }
 
 /**

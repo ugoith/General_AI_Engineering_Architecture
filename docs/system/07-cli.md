@@ -144,14 +144,19 @@ node scripts/pack.mjs        # → dist/ai-arch.mjs + dist/ai-arch.cmd + dist/ai
 ## 技能部署：装到 agent 自己的技能根目录才算数
 
 `install` 除了写 `.ai/skills/`（框架内的副本），还会把技能复制到**每个 agent 自己的技能根目录**——
-因为 Claude Code 与 DSH 都不会去 `.ai/skills/` 找技能，只放那里等于没装。
+因为各 agent 都不会去 `.ai/skills/` 找技能，只放那里等于没装。落点**逐个对照官方文档核实过**：
 
-| agent | 指针文件 | 技能根目录 | 依据 |
-|---|---|---|---|
-| Claude Code | `.claude/CLAUDE.md` | `.claude/skills/<id>/SKILL.md` | 扫描项目/插件的 `skills/` |
-| DeepSeek Harness | `.dsh/AGENTS.md` | `.dsh/skills/<id>/SKILL.md` | `dsh-skill-filesystem` 扫描项目 `.dsh/skills/`，**不支持嵌套 SKILL.md** |
-| Cursor | `.cursor/rules/ai-arch.mdc` | —— | 规则文件足以承载指针 |
-| Codex / Copilot / WorkBuddy / Continue | 各自指针文件 | —— | 同上 |
+| agent | 指针文件 | 技能根目录 | 路径级规则 | 依据 |
+|---|---|---|---|---|
+| Claude Code | `.claude/CLAUDE.md` | `.claude/skills/` | —— | 扫描项目/插件的 `skills/` |
+| DeepSeek Harness | `.dsh/AGENTS.md` | `.dsh/skills/` | —— | `dsh-skill-filesystem`；**不支持嵌套 SKILL.md** |
+| Cursor | `.cursor/rules/ai-arch.mdc` | `.cursor/skills/` **与** `.agents/skills/` | `.cursor/rules/ai-arch-<skill>.mdc`（`globs` + `alwaysApply: false`） | Cursor 同时认自己的 `.cursor/skills` 与跨工具约定的 `.agents/skills`；规则 frontmatter 为 `description`/`globs`/`alwaysApply` 三字段 |
+| GitHub Copilot | `.github/copilot-instructions.md` | —— | `.github/instructions/<skill>.instructions.md`（`applyTo`） | 路径级指令靠 `applyTo` glob 自动附加 |
+| Gemini CLI | `.gemini/GEMINI.md` + `.gemini/extensions/ai-engineering-arch/` | —— | —— | 扩展清单 `gemini-extension.json`，`name` **必须等于扩展目录名**，`contextFileName` 指向上下文文件 |
+| Codex / WorkBuddy / Continue | 各自指针文件 | —— | —— | 只有单一上下文文件，无目录式技能 |
+
+**只有声明了 `globs` 的 skill 才生成路径级规则**：通用型技能（如 `adr-writing`）与文件类型无关，
+本就该全局可用；给它们编造 glob 只会制造噪音。
 
 **技能 frontmatter 必须工具中立**（`scripts/validate.mjs` 强制）：
 
@@ -161,6 +166,7 @@ name: code-review              # 必填，须等于目录名
 description: 提交前评审与定期架构评审的可执行清单   # 必填
 user-invocable: true           # 建议：允许用户直接点名调用
 whenToUse: 提交前自查、评审他人改动、定期架构评审   # 必填
+globs: "**/*.{ts,py,cs,cpp}"   # 可选：仅"文件类型/路径特定"的技能才写
 ---
 ```
 
@@ -169,7 +175,7 @@ whenToUse: 提交前自查、评审他人改动、定期架构评审   # 必填
 
 ## 分发给其它 agent：`scripts/dist.mjs`
 
-一份源（`skills/`、`cli/`、`templates/`），产出三种目标形态：
+一份源（`skills/`、`cli/`、`templates/`），产出七种目标形态：
 
 ```bash
 node scripts/dist.mjs --report   # 先看将产出什么、各目标的要求
@@ -178,26 +184,38 @@ node scripts/dist.mjs            # 产出
 
 | 产出 | 目标 | 形态与要求 |
 |---|---|---|
-| `dist/skills/` | 任何遵循 Agent Skills 标准的工具 | 纯目录 bundle，无构建步骤；DSH 与 Claude 通吃 |
-| `dist/plugins/claude-code/` | Claude Code | `.claude-plugin/plugin.json`（`name` 必填 kebab-case、`version` 语义化）+ `skills/`（默认扫描） |
-| `dist/plugins/dsh/` | DeepSeek Harness | npm 包 + `cordis.patch.yml`（Cordis 插件行）；host 入口导出 `name`/`inject`/`apply`，注册只读工具 |
+| `dist/skills/` | 任何遵循 Agent Skills 标准的工具 | 纯目录 bundle，无构建步骤 |
+| `dist/agent-kit/` | **跨工具一次装完** | 按各家目录约定组织好的整套文件，解包即用（由同一张适配表生成，不会与 `install` 漂移） |
+| `dist/plugins/claude-code/` | Claude Code | `.claude-plugin/plugin.json`（`name` kebab-case、`version` 语义化、路径须 `./` 开头且禁 `../`）+ `skills/` |
+| `dist/plugins/cursor/` | Cursor | `.cursor-plugin/plugin.json` + `marketplace.json`；规则 `.cursor/rules/*.mdc`；`skills/` |
+| `dist/plugins/dsh/` | DeepSeek Harness | npm 包 + `cordis.patch.yml`（`insert` 一行，`name` 等于包名）；host 入口导出 `name`/`inject`/`apply` |
+| `dist/instructions/copilot/` | GitHub Copilot | `.github/copilot-instructions.md` + `.github/instructions/*.instructions.md`（`applyTo`） |
+| `dist/extensions/ai-engineering-arch/` | Gemini CLI | `gemini-extension.json` + `GEMINI.md`（目录名即扩展名） |
 
-**为什么源只留一份、其余全部生成**：同一份知识复制成三套目录必然漂移。生成物不入库（`.gitignore` 忽略 `dist/`），
+**为什么源只留一份、其余全部生成**：同一份知识复制成多套目录必然漂移。生成物不入库（`.gitignore` 忽略 `dist/`），
 每次发布重建，因此不存在"改了源忘了改副本"。
 
 **DSH 插件只暴露只读命令**（`doctor` / `task` / `rules` / `rules add` / `facts` / `review --drift`）：
 初始化与升级会写文件，属于"需要人确认的动作"，不由模型直接触发。
 
-**离线验证**（本机没有可启动的 DSH profile，因此把能证伪的风险点全部离线覆盖）：
+### 验证（离线，不需要安装这些产品）
 
 ```bash
-node scripts/verify-dsh.mjs
+node scripts/verify-dist.mjs    # 七种分发物逐项对照各产品官方格式
+node scripts/verify-dsh.mjs     # DSH 插件的深度冒烟（含真实执行与"不改动项目"断言）
 ```
 
-它检查：包元数据与补丁形状、host 入口可否被 ESM 导入（含 `import.meta.dirname` 用法）、
-导出是否符合 DSH 契约、工具是否注册且有足够详细的描述、**只读工具在真实项目上可执行且不改动文件**、
-随包 skills 的 frontmatter 与"无嵌套 SKILL.md"。当前 61 项全通过。
-它**不能**证明：工具在真实 DSH 会话中被模型调用的表现——这一点在产出物的 README 里也如实标注。
+`verify-dist` 检查：清单位置与字段名、取值格式（kebab-case / 语义化版本 / 相对路径规则）、
+目录布局、指针可达性、frontmatter 标准键、以及**扩展名与目录名一致**这类容易忽略的官方要求。
+
+`verify-dsh` 更进一步：把插件在最小 ctx 下 `apply()`，用真实临时项目逐个执行只读工具，
+断言"除自声明产物外不改动任何项目文件"。
+
+**已验证 / 未验证（如实说明）**：格式与离线行为已逐项验证（`verify-dist` 115 项、`verify-dsh` 61 项）；
+**运行时的实际加载行为未验证**——本机没有安装这些产品。DSH 侧额外做了一步：
+用 profile 的 `cordis.patch.yml` 以 file URL 挂载插件并跑 `dsh --profile <p> --dump-config`，
+确认**加载器能解析该文件并把它组合进插件树**（零错误）。注意 `dsh plugin add` 会转发给 **pnpm**，
+本机未安装 pnpm，因此正式安装路径（走包管理器）未实跑。
 
 ## init
 

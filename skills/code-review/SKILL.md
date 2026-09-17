@@ -3,6 +3,7 @@ name: code-review
 description: 提交前评审与定期架构评审的可执行清单
 user-invocable: true
 whenToUse: 提交前自查、评审他人改动、定期架构评审
+globs: "**/*.{ts,tsx,js,mjs,cjs,py,cs,cpp,h,hpp,gd,go,rs,java,kt}"
 ---
 
 # 评审清单

@@ -3,6 +3,7 @@ name: game-engine-conventions
 description: Unity / Unreal / Godot / Web 游戏项目的引擎特有约定，重点是"资产不可整读"
 user-invocable: true
 whenToUse: 在任何游戏引擎项目中工作（场景、预制体、蓝图、资产相关任务时尤其重要）
+globs: "**/Assets/**,**/Content/**,**/scenes/**,**/*.{unity,prefab,umap,tscn,tres}"
 ---
 
 # 引擎特有约定

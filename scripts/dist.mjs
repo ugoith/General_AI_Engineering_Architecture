@@ -18,8 +18,9 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
@@ -510,6 +511,269 @@ node <框架目录>/cli/ai-arch.mjs install --root .
   return { dir: 'dist/plugins/dsh', files: cliFiles + tplFiles + skillFiles + 6 };
 }
 
+/* --------------------------------------- 4. 统一 agent kit（跨工具） */
+
+/**
+ * 一个"kit"= 按各 agent 自己的目录约定组织好的一整套文件，解包即用。
+ *
+ * 为什么需要它（比逐个插件更普适）：
+ *   插件市场只覆盖少数产品，而且各家的市场机制还在变；但"把文件放到约定目录"是所有 agent
+ *   都支持的最低公共分母。因此我们同时提供：
+ *     - 可提交进仓库的 kit（dist/agent-kit/）—— 一次拷进项目，各工具自动发现
+ *     - CLI 按需生成（ai-arch install）—— 只针对项目里**已存在**的 agent 目录
+ *   两者生成规则完全一致（同一个 AGENT_ADAPTERS 表），因此不会漂移。
+ */
+async function buildAgentKit() {
+  const root = path.join(dist, 'agent-kit');
+  // 复用 CLI 的适配表：单一事实来源，避免 kit 与 install 两套规则
+  const mod = await import(pathToFileURL(path.join(repo, 'cli', 'lib', 'install.mjs')).href);
+  const adapters = mod.AGENT_ADAPTERS;
+
+  // 造一个"目标项目根"，用 install 的写入逻辑把 kit 内容生成出来
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-kit-'));
+  try {
+    for (const a of adapters) {
+      fs.mkdirSync(path.join(staging, a.detectDir), { recursive: true });
+    }
+    mod.writeAgentAdapters(staging, { agents: 'all', forceSkills: true });
+
+    // 只把 agent 目录拷进 kit（.ai/ 由 CLI install 负责，不属于 kit）
+    const KEEP = new Set([
+      '.claude', '.dsh', '.cursor', '.codex', '.github', '.gemini',
+      '.workbuddy', '.continue', '.agents',
+    ]);
+    let files = 0;
+    for (const entry of fs.readdirSync(staging, { withFileTypes: true })) {
+      if (!KEEP.has(entry.name)) continue;
+      files += copyDir(path.join(staging, entry.name), path.join(root, entry.name));
+    }
+
+    writeFile(path.join(root, 'README.md'), `# Agent Kit —— 一次拷进项目，各 AI 工具自动发现
+
+本目录是按各家 agent **自己的目录约定**组织好的一整套文件。拷进项目根即可生效，不需要构建。
+
+## 用法
+
+\`\`\`bash
+# 把本目录内容拷到项目根（同名的现有文件请自行合并，不要盲目覆盖）
+cp -r dist/agent-kit/. <你的项目>/
+\`\`\`
+
+或让 CLI 只针对项目里**已存在**的 agent 目录生成（更保守，不会凭空造目录）：
+
+\`\`\`bash
+node <框架目录>/cli/ai-arch.mjs install --root <你的项目>
+\`\`\`
+
+## 各工具的落点（逐个核实过官方文档）
+
+| 工具 | 上下文/规则文件 | 技能目录 |
+|---|---|---|
+| Claude Code | \`.claude/CLAUDE.md\` | \`.claude/skills/<id>/SKILL.md\` |
+| DeepSeek Harness | \`.dsh/AGENTS.md\` | \`.dsh/skills/<id>/SKILL.md\` |
+| Cursor | \`.cursor/rules/*.mdc\`（含按 glob 自动附着的路径级规则） | \`.cursor/skills/\` 与 \`.agents/skills/\` |
+| GitHub Copilot | \`.github/copilot-instructions.md\` + \`.github/instructions/*.instructions.md\`（\`applyTo\` 路径级） | —— |
+| Gemini CLI | \`.gemini/GEMINI.md\` + 扩展 \`.gemini/extensions/ai-engineering-arch/\` | —— |
+| Codex CLI | \`.codex/AGENTS.md\` | —— |
+| WorkBuddy / Continue | \`.workbuddy/AGENTS.md\` / \`.continue/rules/ai-arch.md\` | —— |
+
+**注意**：这些文件都只是**指针**——真正的知识在项目根 \`AGENTS.md\` 与 \`.ai/\`，由
+\`ai-arch install\` 生成。只拷 kit 不跑 install，agent 会找不到被指向的文件。
+`);
+    return { dir: 'dist/agent-kit', files: files + 1 };
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+/* ------------------------------------- 5. Gemini CLI 扩展 */
+
+function buildGeminiExtension() {
+  const name = 'ai-engineering-arch';
+  // 关键：Gemini CLI 要求 `name` 等于扩展目录名，因此目录就按扩展名命名
+  // （而不是按产品名命名），这样用户可以直接整目录拷进 .gemini/extensions/。
+  const root = path.join(dist, 'extensions', name);
+  writeFile(path.join(root, 'gemini-extension.json'), JSON.stringify({
+    name,
+    version: pkg.version,
+    contextFileName: 'GEMINI.md',
+  }, null, 2) + '\n');
+  writeFile(path.join(root, 'GEMINI.md'), `# AI 工程架构（Gemini CLI 扩展）
+
+> 本扩展只做一件事：把项目入口指给 Gemini。**上下文与索引由 \`ai-arch install\` 生成到项目里。**
+
+## 安装
+
+目录名与 \`gemini-extension.json\` 的 \`name\` 一致（官方要求），因此可以整目录拷贝：
+
+\`\`\`bash
+# 项目级
+mkdir -p <你的项目>/.gemini/extensions
+cp -r <框架目录>/dist/extensions/${name} <你的项目>/.gemini/extensions/
+# 用户级（对所有项目生效）
+cp -r <框架目录>/dist/extensions/${name} ~/.gemini/extensions/
+\`\`\`
+
+## 上下文
+
+- 仓库根的 \`AGENTS.md\` 是唯一入口，请先完整读取它。
+- 索引与任务包在 \`.ai/\`：\`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 生成读取清单。
+- 规则集 \`.ai/rules.json\`；事实与可用能力 \`.ai/project-facts.json\`；红线与验证命令 \`.ai/constitution.md\`。
+`);
+  return { dir: `dist/extensions/${name}`, files: 2 };
+}
+
+/* ------------------------------------- 6. Cursor 插件（含规则与技能） */
+
+function buildCursorPlugin() {
+  const root = path.join(dist, 'plugins', 'cursor');
+  const name = 'ai-engineering-arch';
+  writeFile(path.join(root, '.cursor-plugin', 'plugin.json'), JSON.stringify({
+    name,
+    version: pkg.version,
+    description: '把 AI 工程架构接入当前项目：分层上下文、文件索引与语义摘要、任务上下文包、项目规则与漂移检测。',
+    author: { name: 'ugoith' },
+    homepage: 'https://github.com/ugoith/General_AI_Engineering_Architecture',
+    repository: 'https://github.com/ugoith/General_AI_Engineering_Architecture',
+    license: 'MIT',
+    keywords: ['ai-agents', 'architecture', 'context-engineering', 'agents-md'],
+  }, null, 2) + '\n');
+  writeFile(path.join(root, '.cursor-plugin', 'marketplace.json'), JSON.stringify({
+    name: 'ai-engineering-arch',
+    plugins: [{ name, source: '.' }],
+  }, null, 2) + '\n');
+
+  // 规则：入口规则（alwaysApply）+ 每个声明了 globs 的 skill 一条路径级规则
+  writeFile(path.join(root, '.cursor', 'rules', 'ai-arch.mdc'), `---
+description: 项目 AI 工程架构入口（指针）
+alwaysApply: true
+---
+
+# 项目 AI 入口
+
+先读仓库根的 \`AGENTS.md\`，再按它的路由表读文件。
+
+- 本项目的规则集在 \`.ai/rules.json\`；事实与能力在 \`.ai/project-facts.json\`。
+- 接入与索引说明：\`.ai/index/README.md\`；项目红线与验证命令：\`.ai/constitution.md\`。
+- 接任务前先跑 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\` 拿读取清单。
+`);
+
+  let n = 2;
+  for (const id of SKILLS) {
+    const text = fs.readFileSync(path.join(repo, 'skills', id, 'SKILL.md'), 'utf8');
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? '';
+    const globs = fm.match(/^globs:\s*(.*)$/m)?.[1]?.trim().replace(/^["']|["']$/g, '');
+    if (!globs) continue; // 通用型技能交给 skills/ 目录发现，不做路径级注入
+    const description = fm.match(/^description:\s*(.*)$/m)?.[1]?.trim() ?? id;
+    writeFile(path.join(root, '.cursor', 'rules', `ai-arch-${id}.mdc`), `---
+description: "AI 工程架构 skill：${description}"
+globs: "${globs}"
+alwaysApply: false
+---
+
+# ${id}
+
+> 路径级投影：完整内容见 \`.ai/skills/${id}/SKILL.md\`，不要在此复制正文。
+
+改动匹配上述 glob 的文件前，先读该 skill 并按其步骤执行。项目规则集在 \`.ai/rules.json\`。
+`);
+    n += 1;
+  }
+  // 技能（Cursor 认 .cursor/skills 与 .agents/skills，这里给 .cursor/skills）
+  n += copyDir(path.join(repo, 'skills'), path.join(root, '.cursor', 'skills'));
+
+  writeFile(path.join(root, 'README.md'), `# AI 工程架构（Cursor 插件）
+
+## 安装
+
+\`\`\`bash
+node scripts/dist.mjs
+# 方式 A：作为本地插件目录（Cursor 插件市场/本地安装）
+#   指向本目录即可
+# 方式 B：直接拷进项目（最简，不依赖市场机制）
+cp -r dist/plugins/cursor/.cursor <你的项目>/
+\`\`\`
+
+## 内容
+
+- \`.cursor/rules/ai-arch.mdc\` —— 入口指针（\`alwaysApply: true\`，每次对话都带上）
+- \`.cursor/rules/ai-arch-*.mdc\` —— **路径级规则**：只在处理匹配 \`globs\` 的文件时注入，
+  避免把所有技能都塞进每次对话
+- \`.cursor/skills/*/SKILL.md\` —— ${SKILLS.length} 个技能（Cursor 也认 \`.agents/skills/\`，
+  用 CLI 的 \`ai-arch install\` 会两个目录都写）
+
+## 还需要一步
+
+规则与技能只是"怎么干活"；**项目上下文**（\`AGENTS.md\`、\`.ai/\` 索引与任务包）需要初始化：
+
+\`\`\`bash
+node <框架目录>/cli/ai-arch.mjs install --root .
+\`\`\`
+`);
+  return { dir: 'dist/plugins/cursor', files: n + 3 };
+}
+
+/* ------------------------------------- 7. Copilot 指令包 */
+
+function buildCopilotInstructions() {
+  const root = path.join(dist, 'instructions', 'copilot');
+  writeFile(path.join(root, 'copilot-instructions.md'), `# Copilot 指令（指针）
+
+本项目的 AI 入口是仓库根的 \`AGENTS.md\`，请先读它再动手。
+
+- 任务开始前先跑 \`node .ai/bin/ai-arch.mjs task "<任务描述>"\`，按它给出的读取清单读文件。
+- 项目红线与验证命令：\`.ai/constitution.md\`；索引说明：\`.ai/index/README.md\`。
+- 项目规则集：\`.ai/rules.json\`（含每条规则的判定方式）。
+- 引擎/工具链能力与边界：\`.ai/project-facts.json\`。
+
+> 针对特定文件类型的补充指令在 \`.github/instructions/\`（按 \`applyTo\` glob 自动生效）。
+`);
+  let n = 1;
+  for (const id of SKILLS) {
+    const text = fs.readFileSync(path.join(repo, 'skills', id, 'SKILL.md'), 'utf8');
+    const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? '';
+    const globs = fm.match(/^globs:\s*(.*)$/m)?.[1]?.trim().replace(/^["']|["']$/g, '');
+    if (!globs) continue;
+    const description = fm.match(/^description:\s*(.*)$/m)?.[1]?.trim() ?? id;
+    const whenToUse = fm.match(/^whenToUse:\s*(.*)$/m)?.[1]?.trim() ?? '';
+    writeFile(path.join(root, 'instructions', `${id}.instructions.md`), `---
+applyTo: "${globs}"
+---
+
+# ${description}
+
+> 路径级投影：完整内容见项目内 \`.ai/skills/${id}/SKILL.md\`，不要在此复制正文。
+
+**何时适用**：${whenToUse}
+
+改动匹配上述 glob 的文件前，先读该 skill 并按其步骤执行。项目规则集在 \`.ai/rules.json\`。
+`);
+    n += 1;
+  }
+  writeFile(path.join(root, 'README.md'), `# AI 工程架构（GitHub Copilot 指令包）
+
+## 安装
+
+\`\`\`bash
+node scripts/dist.mjs
+cp -r dist/instructions/copilot/.github <你的项目>/     # 合并，不要覆盖已有的 copilot-instructions.md
+\`\`\`
+
+## 内容
+
+- \`.github/copilot-instructions.md\` —— 项目级指令（指针）
+- \`.github/instructions/*.instructions.md\` —— **路径级指令**，frontmatter 的 \`applyTo\` 是
+  逗号分隔的 glob；只在处理匹配文件时自动注入
+
+## 还需要一步
+
+\`\`\`bash
+node <框架目录>/cli/ai-arch.mjs install --root .
+\`\`\`
+`);
+  return { dir: 'dist/instructions/copilot', files: n + 1 };
+}
+
 /* ------------------------------------------------------------- 主流程 */
 
 if (REPORT_ONLY) {
@@ -529,7 +793,8 @@ if (REPORT_ONLY) {
 }
 
 fs.rmSync(dist, { recursive: true, force: true });
-const results = [buildSkillsPack(), buildClaudePlugin(), buildDshPlugin()];
+const results = [buildSkillsPack(), buildClaudePlugin(), buildDshPlugin(), buildCursorPlugin(), buildCopilotInstructions(), buildGeminiExtension()];
+results.push(await buildAgentKit());
 process.stdout.write(`分发物已产出（框架版本 ${pkg.version}，源 skill ${SKILLS.length} 个）：\n`);
-for (const r of results) process.stdout.write(`  ${r.dir.padEnd(28)} ${r.files} 个文件\n`);
-process.stdout.write('\n安装方式见各目录内的 README.md。\n');
+for (const r of results) process.stdout.write(`  ${r.dir.padEnd(32)} ${r.files} 个文件\n`);
+process.stdout.write('\n安装方式见各目录内的 README.md；跨工具一次装完用 dist/agent-kit/。\n');

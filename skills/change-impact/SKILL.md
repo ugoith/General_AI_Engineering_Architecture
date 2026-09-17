@@ -3,6 +3,7 @@ name: change-impact
 description: 改动前后做影响面分析，避免"改了 A 忘了 B"
 user-invocable: true
 whenToUse: 修改接口/数据模型/模块边界/公共行为前后
+globs: "**/*.{ts,tsx,js,mjs,py,cs,cpp,h,hpp,gd,go,rs},**/*.json,**/*.{yaml,yml}"
 ---
 
 # 变更影响面分析与同步更新

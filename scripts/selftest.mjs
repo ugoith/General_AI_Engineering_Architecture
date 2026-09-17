@@ -604,6 +604,57 @@ async function extraTests() {
     fs.rmSync(skillRoot, { recursive: true, force: true });
     pass();
 
+    begin('行为：install 覆盖多 agent（技能根、路径级规则、扩展清单）');
+    // 逐家核实过的落点：
+    //  Claude .claude/skills；DSH .dsh/skills；Cursor .cursor/skills **与** .agents/skills（两个都认）；
+    //  Copilot 路径级指令 .github/instructions/*.instructions.md（applyTo）；Gemini 扩展清单。
+    const multi = tmpDir('multi-agent');
+    for (const d of ['.claude', '.dsh', '.cursor', '.github', '.gemini', '.codex']) {
+      fs.mkdirSync(path.join(multi, d), { recursive: true });
+    }
+    fs.writeFileSync(path.join(multi, 'main.mjs'), 'export const x = 1;\n', 'utf8');
+    const multiRes = JSON.parse((await run(['install', multi, '--pack', 'software-cli-small', '--json'])).stdout);
+    const detected = multiRes.agentAdapters.detected;
+    for (const id of ['claude', 'dsh', 'cursor', 'copilot', 'gemini', 'codex']) {
+      assert(detected.includes(id), `未探测到 agent：${id}`);
+    }
+    // 技能根：四个（含 Cursor 的跨工具目录 .agents/skills）
+    for (const root of ['.claude/skills', '.dsh/skills', '.cursor/skills', '.agents/skills']) {
+      const n = fs.readdirSync(path.join(multi, ...root.split('/')), { withFileTypes: true })
+        .filter((e) => e.isDirectory()).length;
+      assert(n >= 7, `${root} 技能数不足：${n}`);
+    }
+    // 路径级规则：Cursor 用 .mdc（含 globs），Copilot 用 .instructions.md（含 applyTo）
+    const mdc = fs.readdirSync(path.join(multi, '.cursor', 'rules')).filter((f) => f.endsWith('.mdc'));
+    assert(mdc.length >= 2, `Cursor 路径级规则未生成：${mdc.length} 条`);
+    const mdcScoped = mdc.filter((f) => f !== 'ai-arch.mdc');
+    assert(mdcScoped.length >= 3, `Cursor 路径级规则过少：${mdcScoped.length} 条`);
+    for (const f of mdcScoped) {
+      const text = fs.readFileSync(path.join(multi, '.cursor', 'rules', f), 'utf8');
+      assert(/^globs:/m.test(text) && /^alwaysApply:\s*false/m.test(text),
+        `Cursor 路径级规则 ${f} 缺 globs 或 alwaysApply:false`);
+    }
+    const instr = fs.readdirSync(path.join(multi, '.github', 'instructions')).filter((f) => f.endsWith('.instructions.md'));
+    assert(instr.length >= 3, `Copilot 路径级指令过少：${instr.length} 个`);
+    for (const f of instr) {
+      const text = fs.readFileSync(path.join(multi, '.github', 'instructions', f), 'utf8');
+      assert(/^applyTo:/m.test(text), `Copilot 指令 ${f} 缺 applyTo`);
+    }
+    // Gemini 扩展：name 必须等于扩展目录名
+    const extDir = path.join(multi, '.gemini', 'extensions', 'ai-engineering-arch');
+    assert(isDir(extDir), 'Gemini 扩展目录未创建');
+    const extManifest = readJsonSafe(path.join(extDir, 'gemini-extension.json'), null);
+    assert(extManifest?.name === 'ai-engineering-arch', 'Gemini 扩展 name 与目录名不一致（官方要求）');
+    assert(extManifest?.contextFileName === 'GEMINI.md', 'Gemini 扩展未声明 contextFileName');
+    assert(isFile(path.join(extDir, 'GEMINI.md')), 'Gemini 扩展的 contextFileName 指向的文件不存在');
+    // 指针都要指向仓库根 AGENTS.md 与 .ai/
+    for (const rel of ['.claude/CLAUDE.md', '.dsh/AGENTS.md', '.cursor/rules/ai-arch.mdc', '.github/copilot-instructions.md', '.gemini/GEMINI.md']) {
+      const text = fs.readFileSync(path.join(multi, rel), 'utf8');
+      assert(/AGENTS\.md/.test(text) && /\.ai\//.test(text), `指针 ${rel} 未同时指向 AGENTS.md 与 .ai/`);
+    }
+    fs.rmSync(multi, { recursive: true, force: true });
+    pass();
+
     begin('行为：rules——新增约束必须入库、可判定、并自动传播');
     const rulesRoot = tmpDir('rules');
     fs.mkdirSync(path.join(rulesRoot, 'src'), { recursive: true });
