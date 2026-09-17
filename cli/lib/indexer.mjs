@@ -219,13 +219,22 @@ function summarize(entries) {
   let pending = 0;
   let stale = 0;
   let loc = 0;
+  let contextLoc = 0;
+  let contextFiles = 0;
   for (const entry of entries) {
     byRisk[entry.risk] = (byRisk[entry.risk] ?? 0) + 1;
     if (entry.digest.status === 'pending') pending += 1;
     if (entry.digest.stale) stale += 1;
-    loc += entry.loc ?? 0;
+    // `.ai/` 的上下文行数单列：规模等级判定看的是**源行数**（见 docs/system/02-scales.md），
+    // 把宪法/索引说明算进去会让项目凭空"变大"一级。
+    if (entry.path.startsWith('.ai/')) {
+      contextLoc += entry.loc ?? 0;
+      contextFiles += 1;
+    } else {
+      loc += entry.loc ?? 0;
+    }
   }
-  return { byRisk, pendingDigest: pending, staleDigest: stale, totalLoc: loc };
+  return { byRisk, pendingDigest: pending, staleDigest: stale, totalLoc: loc, contextLoc, contextFiles };
 }
 
 export function loadIndex(root) {
@@ -347,16 +356,6 @@ const AI_INTERNAL_PREFIXES = [
   '.ai/cache/',
 ];
 
-/**
- * 是否为"框架自身"的路径：不进索引、不写摘要、不进任务读取清单。
- *
- * 整个 `.ai/` 都算——它是**框架与 AI 的工作区**，不是项目内容：
- * 索引描述项目，不该把框架自己的规范快照、CLI 副本、任务包算进"项目行数"。
- * （实测：某 UE 项目的 .ai/ 文档占了 1336 行，被算进规模评估会误导等级判定。）
- */
-export function isFrameworkSnapshot(relPath) {
-  return relPath.startsWith('.ai/');
-}
 /** `.ai/` 下值得写摘要的核心上下文。 */
 const AI_CORE_PATHS = new Set([
   '.ai/constitution.md',
@@ -365,6 +364,48 @@ const AI_CORE_PATHS = new Set([
   '.ai/index/impact-map.json',
   '.ai/skills/README.md',
 ]);
+
+/**
+ * 进索引的 `.ai/` 文件：**每次会话都要读、或用来做判定的上下文**。
+ *
+ * 这是一处"实现与文档不一致"的修正：
+ *   - `docs/system/04-context-discipline.md` 与本仓库 README 都写明"框架快照（`.ai/framework/`、`.ai/bin/`、`.ai/lib/`）不进索引"，
+ *     但实现是 `relPath.startsWith('.ai/')` —— **整个 `.ai/` 都被排除了**。
+ *   - 后果不是"少几条索引"，而是**L1/L2 上下文无法被对账**：宪法改了没人知道、任务包给不出它的 hash、
+ *     注册表与影响矩阵自身的变更完全不可见。而 `AI_CORE_PATHS` / `aiContextPriority` / `staleFiles({includeAiInternals})`
+ *     这些机制本来就是按"它们会在索引里"写的——于是成了永远不会执行的死代码。
+ *   - 规模评估不受影响：`.ai/` 的行数单独记为 `summary.contextLoc`，不混进 `totalLoc`（源行数）。
+ */
+const AI_INDEXED_PATHS = new Set([
+  ...AI_CORE_PATHS,
+  '.ai/rules.json',         // 项目规则：任务包按它的 hash 判定"规则是否变过"
+  '.ai/project-facts.json', // 项目事实：能力判定随引擎版本变化
+]);
+
+/**
+ * `.ai/index/` 下的**索引体系文档**整体进索引（资产索引、域索引等）。
+ * 为什么用前缀而不是逐个列：模板包可以声明自己类型的索引文件（`alwaysRead`，如 UE 的 `.ai/index/asset-index.md`），
+ * 逐个列举必然漏——漏掉的后果是"任务包必读项没有 hash、收尾时对不了账"。
+ */
+const AI_INDEXED_PREFIXES = ['.ai/index/'];
+
+function isIndexedContext(relPath) {
+  if (AI_INDEXED_PATHS.has(relPath)) return true;
+  if (relPath === '.ai/index/files.json') return false; // 索引自身不描述自己
+  return AI_INDEXED_PREFIXES.some((p) => relPath.startsWith(p));
+}
+
+/**
+ * 是否为"框架自身"的路径：不进索引、不写摘要、不进任务读取清单。
+ *
+ * `.ai/` 里绝大多数是**框架与 AI 的工作区**（框架快照、CLI 副本、任务包、技能副本、ADR），
+ * 不该算进"项目行数"。但**上下文文件本身**必须进索引——否则它们永远无法被 hash 对账（见 AI_INDEXED_PATHS）。
+ * （实测：某 UE 项目的 `.ai/` 文档占了 1336 行，被算进规模评估会误导等级判定——所以行数是分开统计的。）
+ */
+export function isFrameworkSnapshot(relPath) {
+  if (!relPath.startsWith('.ai/')) return false;
+  return !isIndexedContext(normalizeRel(relPath));
+}
 
 function isAiInternal(relPath) {
   if (AI_CORE_PATHS.has(relPath)) return false;
@@ -376,6 +417,7 @@ export function aiContextPriority(relPath) {
   if (relPath.startsWith('.ai/framework/')) return 0;   // 框架规范/模板快照：只读资产，不该进任务读取清单
   if (relPath.startsWith('.ai/bin/') || relPath.startsWith('.ai/lib/')) return 0;
   if (relPath.startsWith('.ai/cache/')) return 0;
+  if (relPath.startsWith('.ai/index/')) return 5;        // 索引体系文档（含资产索引）：与核心上下文同级
   if (relPath.startsWith('.ai/')) return AI_CORE_PATHS.has(relPath) ? 5 : 1;
   if (/^docs\//.test(relPath)) return 7;
   if (/(^|\/)(tests?|specs?)\//i.test(relPath) || /\.(test|spec)\./i.test(relPath)) return 8;

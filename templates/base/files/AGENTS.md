@@ -7,7 +7,7 @@
 
 开工前必读（两份，不要跳过）：
 
-1. `{{aiDir}}/constitution.md` —— 定位、技术栈、**验证命令**、红线、规模门槛（L1，≤120 行）。
+1. `{{aiDir}}/constitution.md` —— 定位、技术栈、**验证命令**、红线、规模门槛（L1，≤150 行）。
 2. `{{aiDir}}/index/README.md` —— 索引体系说明书：files.json 的摘要字段、impact-map.json 与任务包怎么用。
 
 ## 硬约束（不可协商）
@@ -45,13 +45,15 @@
 
 > 表里提到的 `{{docsDir}}/architecture/*.md` 只在项目确实有这些文件时才读；缺失时按 `{{aiDir}}/index/impact-map.json` 的 `mustUpdate` 判断是"本规模不需要"（记进宪法"本项目的例外"）还是"该补了"。
 
-## 提交前必须做
+## 任务收尾必须做（顺序不能颠倒）
 
 ```bash
-node {{aiDir}}/bin/ai-arch.mjs index --stale     # 列出摘要过期的文件
-node {{aiDir}}/bin/ai-arch.mjs review --drift    # 漂移检测：hash / 决策 / 链接
+node {{aiDir}}/bin/ai-arch.mjs review --task    # 1. 闭环对账：实际改动 vs 任务包里的计划
+node {{aiDir}}/bin/ai-arch.mjs index --stale    # 2. 按上一步清单补摘要（顺带刷新 hash）
+node {{aiDir}}/bin/ai-arch.mjs review --drift   # 3. 终检：hash / 决策 / 链接
 ```
 
-- 两条命令都不允许出现**新增**未处理项；处理不了的写进任务包"遗留风险"一节。
+- 三条命令都不允许出现**新增**未处理项；处理不了的写进任务包"遗留风险"一节。
 - 验证命令的**真实输出摘要**必须贴进任务包"证据"一节，不要只写"测试通过"。
 - 索引没更新的改动视为未完成：hash 会漂移，下一个任务会读到过期摘要。
+- `review --task` 报 `task-premise-stale` 时必须**重读那个文件**：任务包当时判定它没变、只让你读摘要，而它已经变了。

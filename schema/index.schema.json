@@ -59,7 +59,9 @@
         },
         "pendingDigest": { "type": "integer" },
         "staleDigest": { "type": "integer" },
-        "totalLoc": { "type": "integer" }
+        "totalLoc": { "type": "integer", "description": "源行数（不含 .ai/）：规模等级判定用这个" },
+        "contextLoc": { "type": "integer", "description": ".ai/ 下参与判定的上下文文件行数；与 totalLoc 分开，避免上下文文档把项目"算大"一级" },
+        "contextFiles": { "type": "integer", "description": ".ai/ 下参与判定的上下文文件个数" }
       }
     }
   }

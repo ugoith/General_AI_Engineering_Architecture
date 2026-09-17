@@ -1,7 +1,6 @@
 # {{aiEntry}} — {{projectTitle}} 的 AI 入口
 
-> 本文件是**指针，不是百科**（≤130 行）：只放硬约束、路由表、提交前检查。知识在 `{{aiDir}}/`、`{{docsDir}}/` 与源码里，按需读取。
-> 本 archetype 版本是**完整文件**（渲染器按路径整份覆盖 base），因此保留通用硬约束、路由表与共享片段，并追加 UE 专项。
+> 本文件是**指针，不是百科**（≤150 行）：只放硬约束、路由表、提交前检查。知识在 `{{aiDir}}/`、`{{docsDir}}/` 与源码里，按需读取。
 
 **这是什么项目**：{{description}}
 **项目名**：`{{projectName}}` ｜ **负责人**：{{owner}} ｜ **规模**：{{scaleLevel}} / {{scaleName}} ｜ **框架版本**：{{frameworkVersion}}
@@ -10,7 +9,7 @@
 {{/UNLESS}}
 开工前必读（两份，不要跳过）：
 
-1. `{{aiDir}}/constitution.md` —— 定位、技术栈、**验证命令**、红线、规模门槛、例外记录（L1，≤130 行）。
+1. `{{aiDir}}/constitution.md` —— 定位、技术栈、**验证命令**、红线、规模门槛、例外记录（L1，≤150 行）。
 2. `{{aiDir}}/index/README.md` —— 索引体系说明书：`files.json` 的摘要字段、`impact-map.json`、任务包怎么用。
 
 ## 硬约束（不可协商）
@@ -25,9 +24,9 @@
 ## UE 专项硬约束（违反即返工）
 
 1. **绝不整读 `.uasset` / `.umap`**（二进制）：理解资产只能靠 `{{aiDir}}/index/asset-index.md` 摘要 + `Content/README.md` 命名约定 + 在编辑器里实际打开确认。
-   **例外通道（随引擎能力变化，见 `{{aiDir}}/project-facts.json`）**：
-   - 引擎 **≥ 5.8** 且启用 **Unreal MCP**（插件标识 `ModelContextProtocol`，需同时启用 AllToolsets）：agent 可在**编辑器运行时**调用工具查询场景/Actor/材质实例/Slate 控件、跑自动化测试、spawn actor。这是**驱动编辑器**，**不是**读取 `.uasset` 文件——它要求编辑器在跑、状态为 Experimental、结果不入库，因此**资产的可共享知识仍必须写进 asset-index**。
-   - 想确认本项目到底能不能用：`node {{aiDir}}/bin/ai-arch.mjs facts`（按引擎版本与已启用插件判定，并给出边界说明）。
+   **例外通道**（是否存在、能做什么、**不能**做什么，由 `.ai/project-facts.json` 决定——版本相关的事实不写死在本文件里，否则引擎升级后它就变成错误指导）：
+   `node {{aiDir}}/bin/ai-arch.mjs facts` 会按本项目引擎版本与已启用插件给出结论与边界；任务包也会自动带上。
+   **但无论有没有这条通道，资产的可共享知识都必须写进 `asset-index.md`**（它离线可读、可入库、可跨会话）。
 2. **改头文件 / 模块 / `.Build.cs` 后必须重新生成项目文件再重编译**；只改 `.cpp` 实现且签名未变时可增量编译（命令见 `{{docsDir}}/runbooks/build-and-verify.md` 第 1 节）。
 3. **`Binaries/`、`Intermediate/`、`Saved/`、`DerivedDataCache/`、`.vs/` 不入库**；它们出现在变更列表里说明 `.gitignore` 被破坏。
 4. **GC 规则**：持有 `UObject` 的成员必须有 `UPROPERTY()`，否则会被 GC 回收成野指针（最难查的一类崩溃）；非拥有引用用 `TWeakObjectPtr<>`。
@@ -74,7 +73,7 @@
 
 {{> SHARED:scope-guard}}
 
-## 提交前必须做
+## 任务收尾必须做（顺序不能颠倒）
 
 ```bash
 # 1) 编译（头文件/模块变更前先重新生成项目文件）
@@ -83,11 +82,13 @@ Build.bat {{projectTitle}}Editor Win64 Development -Project="%CD%\{{projectTitle
 UnrealEditor-Cmd.exe "%CD%\{{projectTitle}}.uproject" -ExecCmds="Automation RunTests Project;Quit" -unattended -nopause -nullrhi -log
 # 3) 打包冒烟（里程碑，或改资产/配置/模块后必须做）
 RunUAT.bat BuildCookRun -project="%CD%\{{projectTitle}}.uproject" -noP4 -platform=Win64 -clientconfig=Development -cook -build -stage -pak -archive -archivedirectory=Build
-# 4) 索引与漂移
+# 4) 收尾：闭环对账 → 补摘要 → 终检
+node {{aiDir}}/bin/ai-arch.mjs review --task
 node {{aiDir}}/bin/ai-arch.mjs index --stale
 node {{aiDir}}/bin/ai-arch.mjs review --drift
 ```
 
 - 编译结果、测试通过/失败数、产物路径与大小必须写进任务包"证据"一节。**没有证据的"应该没问题"不算通过**；未跑的层级写明"未验证 + 原因 + 手动步骤"。
+- 三条收尾命令都不允许出现**新增**未处理项；`review --task` 报 `task-premise-stale` 时必须**重读那个文件**。
 
 {{> SHARED:verification-loop}}

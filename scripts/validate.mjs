@@ -11,7 +11,7 @@
  *  6. 设计模式一致性（cli/lib/patterns.mjs ↔ docs/system/03-pattern-selection.md）
  *  7. token 预算一致性（cli/lib/limits.mjs ↔ docs/system/04-context-discipline.md）
  *  8. 文档相对链接存在
- *  9. 本仓库自身的上下文预算（AGENTS.md ≤ 120 行等）
+ *  9. 本仓库自身的上下文预算（AGENTS.md ≤ 130 行等）
  * 10. selftest 的 PACKS 列表覆盖全部模板包
  *
  * 用法：

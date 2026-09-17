@@ -151,7 +151,7 @@ export function propagationFor(rule) {
 }
 
 /** 校验规则集自身的一致性。 */
-export function auditRules(root) {
+export function auditRules(root, { propagation = true } = {}) {
   const data = loadRules(root);
   const issues = [];
   const seen = new Set();
@@ -182,13 +182,58 @@ export function auditRules(root) {
       issues.push({ level: 'info', id: r.id, message: `存量违规 ${debt} 处待迁移（迁移期允许，但要有清账计划）` });
     }
   }
+  if (propagation) issues.push(...propagationIssues(root, data));
+
   return { issues, summary: {
     total: (data.rules ?? []).length,
     tool: (data.rules ?? []).filter((r) => r.enforcement === 'tool').length,
     review: (data.rules ?? []).filter((r) => r.enforcement === 'review').length,
     manual: (data.rules ?? []).filter((r) => r.enforcement === 'manual').length,
     withDebt: (data.rules ?? []).filter((r) => (r.debt ?? []).length > 0).length,
+    notPropagated: issues.filter((i) => i.code === 'rule-not-propagated').length,
   } };
+}
+
+/**
+ * 规则的**传播验收**：规则 ID 是否真的出现在"会被读到的地方"。
+ *
+ * 为什么需要这一步：`rules add` 会打印一份传播清单，但**打印清单不等于传播发生**。
+ * 一条只存在于 `.ai/rules.json` 的规则有三条腿，缺了两条：
+ *   ① 每次任务包会带上它（这条腿由 rulesDigest 保证，一定成立）；
+ *   ② 改到相关文件时会被影响矩阵触发（缺 → 改动当时想不起来它）；
+ *   ③ 评审清单里逐条出现（缺 → 交付时没人逐条核对）。
+ * ②③ 是否成立是**机械可判定**的：搜 ID 即可。判定得了的约束就不该只靠人记得。
+ *
+ * 匹配用**大小写不敏感**：`rules add` 自动写入的影响矩阵 trigger 是小写的 `r-001-rule-check`，
+ * 它同样是一处真实引用（把大写区分开会把已经自动传播过的规则误报成没传播）。
+ */
+function propagationIssues(root, data) {
+  const carriers = [
+    { rel: '.ai/constitution.md', why: '宪法（每会话必读）' },
+    { rel: '.ai/index/impact-map.json', why: '影响矩阵（变更时触发）' },
+    { rel: '.ai/skills/code-review/SKILL.md', why: '评审清单（交付时逐条过）' },
+  ]
+    .map((c) => {
+      const abs = path.join(root, c.rel);
+      return isFile(abs) ? { ...c, text: fs.readFileSync(abs, 'utf8').toLowerCase() } : null;
+    })
+    .filter(Boolean);
+
+  const issues = [];
+  for (const r of data.rules ?? []) {
+    if (!r.id) continue;
+    const id = String(r.id).toLowerCase();
+    if (carriers.some((c) => c.text.includes(id))) continue;
+    issues.push({
+      level: 'warn',
+      code: 'rule-not-propagated',
+      id: r.id,
+      message: `规则 ${r.id} 只存在于 .ai/rules.json：${carriers.map((c) => c.rel).join('、')} 里都没有引用它`,
+      action: `把它加进 .ai/constitution.md（每会话必读）或 .ai/index/impact-map.json（变更时触发）；`
+        + '`rules add` 的输出里有完整传播清单',
+    });
+  }
+  return issues;
 }
 
 /** 供任务包使用：规则集的内容指纹（变了就提示重读）+ 精简清单。 */

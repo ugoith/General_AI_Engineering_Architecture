@@ -26,11 +26,10 @@
 
 ## 与市面框架的关系
 
-我们把这条赛道上的主流框架（Spec Kit、OpenSpec、BMAD、GSD、Spec Kitty、Reversa）以及相关标准（AGENTS.md、Agent Skills、MCP、CodeDNA）做过一轮定向调研，并逐维对照了本框架的定位与优化空间：
+我们把这条赛道上的主流框架（Spec Kit、OpenSpec、BMAD、GSD、Spec Kitty、Reversa）以及相关标准（AGENTS.md、Agent Skills、MCP）做过一轮定向调研，并逐维对照了本框架的定位与优化空间。调研报告本身是**外部输入**，不放在本仓库（本仓库只放方法的提炼，见 [设计取舍](docs/04-design-notes.md) 第 9 节）。
 
-- 报告：[`docs/07-research-landscape.md`](docs/07-research-landscape.md)；导出 Word：`python scripts/md-to-docx.py docs/07-research-landscape.md out.docx`
 - **一句话定位**：主流框架解决「把需求变成可审查的产物」；本框架解决「让 agent 不要重复读、不要用过期前提、不要把约束说出来就忘掉」。两者互补，重叠面很小。
-- **已知短板（不藏）**：**验证**维度只有机械漂移检测，缺"设计意图 vs 实现"的一致性检查；**角色**维度刻意留白——这是为可移植性做的权衡，理由与改进路径见报告 6.2。
+- **已知短板（不藏）**：**验证**维度只做机械可判定的部分（判定不了"实现是否符合设计意图"）；**角色**维度刻意留白——这是为可移植性做的权衡。两处的理由与替代做法见 [`docs/04-design-notes.md`](docs/04-design-notes.md) 第 9 节，尚未验证的假设见第 11 节。
 
 ## 它解决什么具体问题
 
@@ -40,7 +39,7 @@
 | **新项目/新类型每次从零再来** | 7 套 archetype 模板包 + 规模分级 + 模式选择矩阵 | `init` 一条命令得到完整骨架与 AI 上下文体系 |
 | **需求与规模不匹配（小项目用重型模式）** | S/M/L/XL 规模门槛 + 禁止清单 + CLI 自动评估 | S 级允许的设计模式是**零个**（矩阵里所有模式 `minLevel ≥ M`），写死在规则里 |
 | **规范随时间腐化，AI 照着过期文档干活** | 影响矩阵 + `review --drift` 机械检测 + 定期架构评审触发条件 | 摘要过期、文档断链、决策缺失都会被自动报出 |
-| **"改完就忘"，没有交接材料** | 任务包同时是工作记录（范围/证据/遗留风险）+ ADR 决策记忆 | 接手成本从"读两天代码"降到分钟级 |
+| **"改完就忘"，没有交接材料** | 任务包同时是工作记录（范围/证据/遗留风险）+ 收尾时的机械对账（`review --task`）+ ADR 决策记忆 | 接手成本从"读两天代码"降到分钟级；收尾漏了什么不用靠人记得 |
 | **换 AI 工具/换人就要重来** | 一切知识落盘为纯文本 + AGENTS.md 开放标准 | 工具无关，Claude / Cursor / Copilot / 本地模型都能用 |
 
 ## 核心理念
@@ -49,8 +48,8 @@
 
 | 层 | 内容 | 何时读 | 预算（实测：`node scripts/measure-budget.mjs`） |
 |---|---|---|---|
-| L0 | `AGENTS.md`（指针，不是百科） | 每会话 | ≤ 130 行；软件类 ~1600 token，游戏类 ~1900–2050 |
-| L1 | `.ai/constitution.md`（红线 + 验证命令） | 每会话 | ≤ 130 行；~1050–1690 token |
+| L0 | `AGENTS.md`（指针，不是百科） | 每会话 | ≤ 150 行；软件类 ~1670 token，游戏类 ~1940–2390 |
+| L1 | `.ai/constitution.md`（红线 + 验证命令） | 每会话 | ≤ 150 行；~1240–1650 token |
 | L2 | `.ai/index/`、`.ai/registry.json`（索引/注册表） | 按需查询 | 按条目取，不整份读 |
 | L3 | 源码 | 仅任务包列出的 | 由任务包预算控制（默认 40000 token） |
 
@@ -170,16 +169,18 @@ node ~/ai-arch/cli/ai-arch.mjs init my-service --pack software-app-medium
 ### 场景 C：日常任务循环（这是收益所在）
 
 ```bash
-# 1. 开工：拿任务包
+# 1. 开工：拿任务包（它同时是收尾时的对账基准）
 node .ai/bin/ai-arch.mjs task "修复存档在切场景后丢失的问题" --area src/save
 
 # 2. 把任务包交给 AI；它按清单读文件，不要满仓库搜索
 
-# 3. 收尾：更新索引 + 补摘要 + 查漂移
-node .ai/bin/ai-arch.mjs index
-node .ai/bin/ai-arch.mjs index --stale
-node .ai/bin/ai-arch.mjs review --drift
+# 3. 收尾：闭环自查 → 补摘要 → 终检（顺序不能颠倒）
+node .ai/bin/ai-arch.mjs review --task    # 计划 vs 实际：当时的前提还成立吗、该补什么、该跑哪些测试
+node .ai/bin/ai-arch.mjs index --stale    # 按上一步给出的清单补摘要
+node .ai/bin/ai-arch.mjs review --drift   # 确认无残留漂移
 ```
+
+`review --task` 只重新 hash 任务包列过的文件，所以这一步的成本与**任务规模**成正比，而不是与仓库规模成正比。
 
 ### 场景 D：改了接口/数据，想知道还影响什么
 
@@ -207,7 +208,7 @@ node .ai/bin/ai-arch.mjs review --impact src/api/user.ts --depth 2
 ## 目录结构
 
 ```
-AGENTS.md              AI 入口（≤120 行指针：硬约束 + 路由表 + 提交前检查）
+AGENTS.md              AI 入口（≤150 行指针：硬约束 + 路由表 + 提交前检查）
 CLAUDE.md              Claude 系工具的转发入口
 docs/                  面向人的文档
   system/              规范正文（唯一事实来源）
@@ -231,7 +232,8 @@ scripts/               validate.mjs（结构校验）+ selftest.mjs（端到端�
 | `install-shim [--bin <目录>]` | 把 `ai-arch` 装成命令（像 git 一样随处可用） |
 | `init [dir] --pack <id>` | 用指定模板包初始化（已知类型时用） |
 | `index` / `index --stale` / `index --apply <file>` | 维护文件索引与语义摘要 |
-| `task "<描述>"` | 生成任务上下文包 |
+| `task "<描述>"` | 生成任务上下文包（同时是收尾对账基准） |
+| `review --task [<id>]` | **任务闭环**：计划 vs 实际、前提是否失效、该补的摘要与测试 |
 | `review --drift` / `--impact <文件>` / `--decisions` | 漂移检测 / 影响面 / 决策清单 |
 | `scale` / `scale --gaps` | 规模评估与欠账 |
 | `patterns` | 设计模式选择矩阵（含禁止清单） |

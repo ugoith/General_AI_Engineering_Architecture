@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { estimateTokens } from './report.mjs';
-import { matchesAny, normalizeRel, ensureDir, isFile } from './fsx.mjs';
+import { matchesAny, normalizeRel, ensureDir, isFile, isDir } from './fsx.mjs';
 import { impactOf } from './neighbors.mjs';
 import { DEFAULT_TASK_BUDGET } from './limits.mjs';
 import { rulesDigest } from './rules.mjs';
@@ -31,15 +31,30 @@ export const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
  * 只有模板包知道，不能写死在 CLI 里。
  */
 export const BASE_ALWAYS_READ = [
-  { path: 'AGENTS.md', level: 'L0', label: 'AI 入口（硬约束 + 路由表）' },
-  { path: '.ai/constitution.md', level: 'L1', label: '项目宪法（红线 + 验证命令）' },
-  { path: '.ai/index/README.md', level: 'L2', label: '索引体系说明（只在首次或格式变更后需要）' },
+  { path: 'AGENTS.md', level: 'L0', label: 'AI 入口（硬约束 + 路由表）', when: 'always' },
+  { path: '.ai/constitution.md', level: 'L1', label: '项目宪法（红线 + 验证命令）', when: 'always' },
+  {
+    path: '.ai/index/README.md',
+    level: 'L2',
+    label: '索引体系说明',
+    when: 'index-format-known',
+    skipReason: '索引格式未变、也不是本项目第一次任务：这份说明只在"第一次"和"索引 schemaVersion 变了"时需要重读',
+  },
 ];
 
-export function composeAlwaysRead(pack = null) {
+/**
+ * 生成必读清单。`includeConditional=false` 时**跳过**条件必读项。
+ *
+ * 为什么要有条件必读：`index/README.md` 的标签本来就是"只在首次或格式变更后需要"，
+ * 但早期实现把它按"每次任务的固定成本"计入预算——框架一边说它只需读一次，一边每次都收这份钱。
+ * 固定成本是每个任务都要付的税，不能包含"其实不用读"的文件（见 docs/system/04-context-discipline.md）。
+ */
+export function composeAlwaysRead(pack = null, { includeConditional = true } = {}) {
   const extra = Array.isArray(pack?.alwaysRead) ? pack.alwaysRead : [];
   const seen = new Set(BASE_ALWAYS_READ.map((i) => i.path));
-  const merged = [...BASE_ALWAYS_READ];
+  const merged = BASE_ALWAYS_READ
+    .filter((i) => i.when === 'always' || includeConditional)
+    .map((i) => ({ fallback: null, ...i }));
   for (const item of extra) {
     if (!item?.path || seen.has(item.path)) continue;
     seen.add(item.path);
@@ -48,6 +63,7 @@ export function composeAlwaysRead(pack = null) {
       level: item.level ?? 'L2',
       label: item.label ?? item.path,
       fallback: item.fallback ?? null,
+      when: 'always',
     });
   }
   return merged;
@@ -55,6 +71,45 @@ export function composeAlwaysRead(pack = null) {
 
 /** 兼容旧引用。 */
 export const ALWAYS_READ = BASE_ALWAYS_READ;
+
+/**
+ * 本项目的任务包历史。用于判定"条件必读项这次要不要读"。
+ *
+ * 只看文件名与上一个任务包记录的 `indexSchemaVersion`，**不做全树扫描**：
+ * 这是每个任务都要跑的路径，成本必须接近零。
+ */
+export function taskHistory(projectRoot) {
+  const dir = path.join(projectRoot, '.ai', 'tasks');
+  if (!isDir(dir)) return { count: 0, lastIndexSchemaVersion: null };
+  const packs = fs.readdirSync(dir)
+    .filter((f) => f.endsWith('.md') && f !== 'TEMPLATE.md')
+    .map((f) => {
+      const abs = path.join(dir, f);
+      return { file: abs, mtime: fs.statSync(abs).mtimeMs };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
+  if (packs.length === 0) return { count: 0, lastIndexSchemaVersion: null };
+  const text = fs.readFileSync(packs[0].file, 'utf8');
+  const m = text.match(/^indexSchemaVersion:\s*(\S+)\s*$/m);
+  return {
+    count: packs.length,
+    lastIndexSchemaVersion: m ? m[1] : null,
+    lastPack: normalizeRel(path.relative(projectRoot, packs[0].file)),
+  };
+}
+
+/**
+ * 生成版任务包里的占位符。**必须与 `renderTaskPackMarkdown` 用的一致**：
+ * `taskclose.mjs` 靠它们机械判定"这一节到底填了没有"（占位符还在 = 没填）。
+ * 两处各写一份字符串就会漂移，所以在这里单点定义。
+ */
+export const TASK_PLACEHOLDERS = {
+  scopeIn: '（开工前填写：本次要改什么，边界在哪）',
+  scopeOut: '（填写：本次不碰什么）',
+  acceptance: '（可检查的条件，例如"`npm test` 全绿"）',
+  result: '（完成后填写：实际改了什么、为什么这么改）',
+  evidence: '（粘贴验证命令与输出摘要，不要只说"测试通过"）',
+};
 
 const STOPWORDS = new Set([
   'the', 'a', 'an', 'and', 'or', 'for', 'with', 'that', 'this', 'from', 'into',
@@ -145,6 +200,14 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
 
   const tokens = tokenize(prompt);
   const files = index?.files ?? [];
+
+  // 条件必读的判定依据：本项目此前有没有任务包、上一个任务包记录的索引格式是否还一致。
+  // 注意用字符串比较：front-matter 里读出来的是 "1"，索引里是数字 1，`!==` 会把它们判成不同。
+  const history = taskHistory(projectRoot);
+  const includeConditional = history.count === 0
+    || history.lastIndexSchemaVersion === null
+    || String(history.lastIndexSchemaVersion) !== String(index?.schemaVersion ?? '');
+
   const scored = [];
   for (const entry of files) {
     const { score, hits } = scoreFile(entry, tokens);
@@ -180,8 +243,9 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
   }
 
   const always = [];
+  const alwaysSkipped = [];
   let used = 0;
-  for (const item of composeAlwaysRead(opts.pack)) {
+  for (const item of composeAlwaysRead(opts.pack, { includeConditional })) {
     const node = files.find((f) => f.path === item.path);
     const abs = path.join(projectRoot, item.path);
     const text = isFile(abs) ? fs.readFileSync(abs, 'utf8') : '';
@@ -198,6 +262,12 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
       missingHint: text ? null : (item.fallback ?? null),
     });
     if (!text) used -= tokensEstimate; // 不存在的文件不计成本
+  }
+  if (!includeConditional) {
+    for (const item of BASE_ALWAYS_READ) {
+      if (item.when === 'always') continue;
+      alwaysSkipped.push({ path: item.path, level: item.level, label: item.label, reason: item.skipReason ?? null });
+    }
   }
 
   const selected = [];
@@ -258,6 +328,7 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
 
   return {
     schemaVersion: 1,
+    indexSchemaVersion: index?.schemaVersion ?? null,
     id: `${formatDate(now)}-${slug ?? slugify(prompt)}`,
     createdAt: now.toISOString(),
     prompt,
@@ -271,8 +342,10 @@ export function buildTaskPack(projectRoot, prompt, opts = {}) {
       overBudget: used > budget,
     },
     always,
+    alwaysSkipped,
     readList: selected,
     dropped,
+    history,
     indexHealth: { pendingDigest, staleDigest, totalFiles: files.length },
     rules,
     facts: facts
@@ -323,6 +396,7 @@ export function renderTaskPackMarkdown(pack) {
   lines.push(`createdAt: ${pack.createdAt}`);
   lines.push(`budget: ${pack.budget}`);
   lines.push(`estimatedTokens: ${pack.estimate.total}`);
+  lines.push(`indexSchemaVersion: ${pack.indexSchemaVersion ?? 'unknown'}`);
   lines.push('---');
   lines.push('');
   lines.push(`# 任务包：${pack.prompt}`);
@@ -346,6 +420,11 @@ export function renderTaskPackMarkdown(pack) {
     lines.push(`| ${a.level} | \`${a.path}\`${a.exists ? '' : ' ⚠️ 不存在'} | ${a.label} | ${a.hash ?? '-'} | ~${a.tokens} |`);
   }
   lines.push('');
+  // 条件必读项被跳过时要说出来：否则"这次没让我读"会被误读成"框架漏了它"。
+  for (const s of pack.alwaysSkipped ?? []) {
+    lines.push(`> 本次不列入 \`${s.path}\`（${s.level}）：${s.reason ?? '本次不需要'}。`);
+    lines.push('');
+  }
 
   // 项目规则：必须在正文里逐条列出。规则是"用户提出的约束"，最容易在下次开工时被漏掉。
   if (pack.rules?.present) {
@@ -439,26 +518,28 @@ export function renderTaskPackMarkdown(pack) {
   lines.push('');
   lines.push('**做：**');
   lines.push('');
-  lines.push('- （开工前填写：本次要改什么，边界在哪）');
+  lines.push(`- ${TASK_PLACEHOLDERS.scopeIn}`);
   lines.push('');
   lines.push('**不做（明确排除，避免范围蔓延）：**');
   lines.push('');
-  lines.push('- （填写：本次不碰什么）');
+  lines.push(`- ${TASK_PLACEHOLDERS.scopeOut}`);
   lines.push('');
   lines.push('## 4. 验收标准');
   lines.push('');
-  lines.push('- [ ] （可检查的条件，例如"`npm test` 全绿"）');
+  lines.push(`- [ ] ${TASK_PLACEHOLDERS.acceptance}`);
   lines.push('- [ ] 变更影响面已按 `.ai/index/impact-map.json` 更新');
   lines.push('- [ ] 索引摘要已同步（`ai-arch index`）');
   lines.push('');
+  lines.push('> 后两条由 `node .ai/bin/ai-arch.mjs review --task` 机械判定（拿本文件记录的 hash 与实际对账），不需要自己声称"已同步"。');
+  lines.push('');
   lines.push('## 5. 结果');
   lines.push('');
-  lines.push('（完成后填写：实际改了什么、为什么这么改）');
+  lines.push(TASK_PLACEHOLDERS.result);
   lines.push('');
   lines.push('## 6. 证据');
   lines.push('');
   lines.push('```text');
-  lines.push('（粘贴验证命令与输出摘要，不要只说"测试通过"）');
+  lines.push(TASK_PLACEHOLDERS.evidence);
   lines.push('```');
   lines.push('');
   lines.push('## 7. 遗留风险与假设');
@@ -478,7 +559,17 @@ export function renderTaskPackMarkdown(pack) {
 export function writeTaskPack(projectRoot, pack, { out = null } = {}) {
   const dir = path.join(projectRoot, '.ai', 'tasks');
   ensureDir(dir);
-  const file = out ? path.resolve(out) : path.join(dir, `${pack.id}.md`);
+  let file = out ? path.resolve(out) : path.join(dir, `${pack.id}.md`);
+  if (!out) {
+    // 同名不覆盖：同一天、同一类中文描述会算出同一个 slug，早期实现直接把上一个任务包写没了。
+    // 任务包是收尾对账的依据（见 taskclose.mjs），丢掉它等于丢掉"这次原本计划读什么"。
+    let n = 2;
+    while (fs.existsSync(file)) {
+      file = path.join(dir, `${pack.id}-${n}.md`);
+      n += 1;
+    }
+    pack.id = path.basename(file, '.md'); // 文件名与 taskId 必须一致，否则 --task <id> 找不到
+  }
   fs.writeFileSync(file, renderTaskPackMarkdown(pack), 'utf8');
   return file;
 }

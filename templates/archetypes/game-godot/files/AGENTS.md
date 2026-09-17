@@ -1,12 +1,12 @@
 # {{aiEntry}} — {{projectTitle}} 的 AI 入口
 
-> 本文件是**指针，不是百科**（≤130 行）：只放硬约束、路由表、提交前检查；本 archetype 版本是完整文件（渲染器按路径整份覆盖 base），含通用部分 + Godot 专项。
+> 本文件是**指针，不是百科**（≤150 行）：只放硬约束、路由表、提交前检查；本 archetype 版本是完整文件（渲染器按路径整份覆盖 base），含通用部分 + Godot 专项。
 **这是什么项目**：{{description}}
 **项目名**：`{{projectName}}` ｜ **负责人**：{{owner}} ｜ **规模**：{{scaleLevel}} / {{scaleName}} ｜ **框架版本**：{{frameworkVersion}}
 
 开工前必读（两份，不要跳过）：
 
-1. `{{aiDir}}/constitution.md` —— 定位、技术栈、**验证命令**、红线、规模门槛、例外记录（L1，≤130 行）。
+1. `{{aiDir}}/constitution.md` —— 定位、技术栈、**验证命令**、红线、规模门槛、例外记录（L1，≤150 行）。
 2. `{{aiDir}}/index/README.md` —— 索引体系说明书：`files.json` 的摘要字段、`impact-map.json`、任务包怎么用。
 
 ## 硬约束（不可协商）
@@ -62,7 +62,7 @@
 
 {{> SHARED:scope-guard}}
 
-## 提交前必须做
+## 任务收尾必须做（顺序不能颠倒）
 
 ```bash
 # 1) 无头导入校验（首次或大改资产后必跑；抓脚本解析错误与缺失资源）
@@ -73,11 +73,13 @@ godot --headless --path . -s scripts/dev/smoke_check.gd
 godot --headless --path . -s addons/gut/gut_cmdln.gd -gdir=res://tests -gexit
 # 4) 导出冒烟（预设名以 export_presets.cfg 为准）
 godot --headless --path . --export-release "Windows Desktop" Build/windows/{{projectName}}.exe
-# 5) 索引与漂移
+# 5) 收尾：闭环对账 → 补摘要 → 终检
+node {{aiDir}}/bin/ai-arch.mjs review --task
 node {{aiDir}}/bin/ai-arch.mjs index --stale
 node {{aiDir}}/bin/ai-arch.mjs review --drift
 ```
 
 - 导入是否成功、测试通过/失败数、导出产物路径与大小必须写进任务包"证据"一节。**没有证据的"应该没问题"不算通过**；未跑的层级写"未验证 + 原因 + 风险"。
+- 三条收尾命令都不允许出现**新增**未处理项；`review --task` 报 `task-premise-stale` 时必须**重读那个文件**。
 
 {{> SHARED:verification-loop}}

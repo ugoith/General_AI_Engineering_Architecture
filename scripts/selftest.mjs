@@ -789,7 +789,148 @@ async function extraTests() {
     assert(taskMd.includes('## 1.5 项目规则'), '任务包正文未渲染规则小节');
     assert(taskMd.includes('R-001'), '任务包正文未逐条列出规则');
     assert(taskMd.includes('if 嵌套深度不超过 3 层'), '任务包正文未包含规则内容');
+
+    // 传播验收：规则 ID 必须真的出现在"会被读到的地方"，而不只是被打印出来
+    assert(rulesAudit.summary.notPropagated === 0, '自动传播后不应报"未传播"');
+    const handEdited = readJsonSafe(path.join(rulesRoot, '.ai', 'rules.json'), null);
+    handEdited.rules.push({
+      id: 'R-002',
+      statement: '日志必须带 requestId',
+      category: 'style',
+      enforcement: 'review',
+      check: '评审时检查每条日志调用是否带 requestId',
+      scope: '**',
+      rationale: null,
+      since: '2026-01-01',
+      source: 'user-request',
+      debt: [],
+    });
+    fs.writeFileSync(path.join(rulesRoot, '.ai', 'rules.json'), JSON.stringify(handEdited, null, 2), 'utf8');
+    const audit2 = JSON.parse((await prun(rulesRoot, ['rules', 'audit', '--json'])).stdout);
+    assert(audit2.summary.notPropagated === 1,
+      `手工塞进 rules.json 的规则应被报"未传播"（实际 ${audit2.summary.notPropagated}）`);
+    const notProp = audit2.issues.find((i) => i.code === 'rule-not-propagated');
+    assert(notProp && notProp.action, '未传播问题缺少可行动提示');
+    const docNotProp = (await prun(rulesRoot, ['rules', 'audit'])).stdout;
+    assert(docNotProp.includes('rule-not-propagated'), '人读输出未给出问题代码');
     fs.rmSync(rulesRoot, { recursive: true, force: true });
+    pass();
+
+    begin('行为：索引必须覆盖上下文文件本身（否则 L1/L2 无法对账）');
+    // 早期实现把整个 `.ai/` 排除在索引外，于是宪法/注册表/影响矩阵改了不会被任何机制发现，
+    // 任务包也拿不到它们的 hash——"每会话必读的文件"反而成了唯一没有对账的文件。
+    const scopeRoot = tmpDir('index-scope');
+    await run(['install', scopeRoot, '--pack', 'software-cli-small']);
+    await prun(scopeRoot, ['index']);
+    const sIdx = loadIndex(scopeRoot);
+    for (const rel of ['.ai/constitution.md', '.ai/registry.json', '.ai/index/impact-map.json', '.ai/index/README.md']) {
+      assert(sIdx.files.some((f) => f.path === rel), `索引缺少上下文文件 ${rel}（它改了不会被任何机制发现）`);
+    }
+    assert(!sIdx.files.some((f) => /^\.ai\/(bin|lib|framework|tasks|cache|templates|decisions)\//.test(f.path)),
+      '框架快照/任务包/技能副本/ADR 不应进索引（会污染任务读取清单与行数）');
+    assert(sIdx.summary.contextLoc > 0 && sIdx.summary.totalLoc > 0,
+      '上下文行数与源行数必须分开统计（否则规模评估会凭空升一级）');
+
+    // 任务包必须记录宪法的 hash，否则收尾时无法对账
+    const scopePack = JSON.parse((await prun(scopeRoot, ['task', '任意任务', '--json'])).stdout);
+    const constItem = scopePack.always.find((a) => a.path === '.ai/constitution.md');
+    assert(constItem && constItem.hash, '任务包未记录 .ai/constitution.md 的 hash（无法对账）');
+
+    // 条件必读：第二次任务不该再为"只需读一次"的说明书付固定成本
+    const secondPack = JSON.parse((await prun(scopeRoot, ['task', '第二个任务', '--json'])).stdout);
+    assert(secondPack.alwaysSkipped.some((s) => s.path === '.ai/index/README.md'),
+      '条件必读项在第二次任务仍被计入固定成本（框架一边说"只需读一次"，一边每次都收这份钱）');
+    assert(secondPack.estimate.mandatory < scopePack.estimate.mandatory, '固定成本没有下降');
+    assert(secondPack.id !== scopePack.id, '同一天的同名任务包互相覆盖（收尾对账的依据被写没了）');
+    fs.rmSync(scopeRoot, { recursive: true, force: true });
+
+    // 模板包声明的必读项也必须能对账：game-unreal 的 alwaysRead 指向 .ai/index/asset-index.md
+    const scopeUe = tmpDir('index-scope-ue');
+    await run(['init', scopeUe, '--pack', 'game-unreal', '--name', 'ue-scope']);
+    await prun(scopeUe, ['index']);
+    const ueIdx = loadIndex(scopeUe);
+    assert(ueIdx.files.some((f) => f.path === '.ai/index/asset-index.md'),
+      '模板包声明为必读的资产索引没进索引（任务包会给不出它的 hash，收尾无法对账）');
+    const uePack = JSON.parse((await prun(scopeUe, ['task', '改存档', '--json'])).stdout);
+    const assetItem = uePack.always.find((a) => a.path === '.ai/index/asset-index.md');
+    assert(assetItem && assetItem.hash, '必读的资产索引在任务包里没有 hash');
+    const ueClose = JSON.parse((await prun(scopeUe, ['review', '--task', '--json'])).stdout);
+    assert(!ueClose.findings.some((f) => f.code === 'task-file-unhashed'),
+      '刚 init 的项目不该出现"必读项没有 hash、无法对账"');
+    fs.rmSync(scopeUe, { recursive: true, force: true });
+    pass();
+
+    begin('行为：review --task——任务闭环必须机械可对账');
+    // 这一段验证的是"运行链路的最后一段"：任务包记录了"计划读什么"，
+    // 收尾时必须能机械回答"实际改了什么、当时的前提还成立吗、该补的补了吗"。
+    const closeRoot = tmpDir('taskclose');
+    await run(['install', closeRoot, '--pack', 'software-cli-small']);
+    const closeSrc = path.join(closeRoot, 'src', 'main.mjs');
+    fs.writeFileSync(closeSrc, 'export function run() { return 1; }\n', 'utf8');
+    await prun(closeRoot, ['index']);
+
+    const cIdx = loadIndex(closeRoot);
+    const sEntry = cIdx.files.find((f) => f.path === 'src/main.mjs');
+    assert(sEntry, '前置：src/main.mjs 已进索引');
+    const digestFile = path.join(closeRoot, 'digest.json');
+    const writeDigest = (hash, purpose) => fs.writeFileSync(digestFile, JSON.stringify([{
+      path: 'src/main.mjs',
+      hash,
+      purpose,
+      exports: ['run'],
+      invariants: ['未知命令必须返回退出码 2'],
+      risk: 'medium',
+      tags: ['entry'],
+    }]), 'utf8');
+    writeDigest(sEntry.hash, 'CLI 入口与子命令分发');
+    await prun(closeRoot, ['index', '--apply', digestFile]);
+    await prun(closeRoot, ['index']);
+
+    const closePack = JSON.parse((await prun(closeRoot, ['task', '入口 分发', '--changed', 'src/main.mjs', '--json'])).stdout);
+    const listed = closePack.readList.find((r) => r.path === 'src/main.mjs');
+    assert(listed && listed.decision === 'read-digest', `前置：hash 未变时应判定为读摘要（实际 ${listed?.decision}）`);
+
+    // 未开工前：证据一节必然还是占位符
+    let close = JSON.parse((await prun(closeRoot, ['review', '--task', '--json'])).stdout);
+    assert(close.findings.some((f) => f.code === 'task-evidence-missing'), '未指出证据一节仍是占位符');
+
+    // 改了文件但没回写索引 → "当时只读摘要"的前提失效 + 索引过期，两者都必须报出
+    fs.writeFileSync(closeSrc, 'export function run() { return 2; }\n', 'utf8');
+    close = JSON.parse((await prun(closeRoot, ['review', '--task', '--json'])).stdout);
+    assert(close.task.changedCount === 1, `未对账出"实际改了 1 个文件"（实际 ${close.task.changedCount}）`);
+    assert(close.findings.some((f) => f.code === 'task-premise-stale'),
+      '未检出"当时让我只读摘要、现在内容已变"——这是最危险的一类过期前提');
+    assert(close.findings.some((f) => f.code === 'task-index-stale'), '未检出索引未回写');
+    assert(close.checklist.find((c) => c.item.includes('索引摘要已同步'))?.verdict === 'fail', '验收项未判失败');
+    assert(close.summary.ready === false, 'summary.ready 应为 false');
+
+    // --strict 必须给非 0 退出码（可直接当提交门禁），且人读输出要带问题代码
+    const strictRun = await prun(closeRoot, ['review', '--task', '--strict'], { expectCode: null });
+    assert(strictRun.code === 1, `--strict 应返回 1，实际 ${strictRun.code}`);
+    assert(strictRun.stdout.includes('task-premise-stale'), '人读输出未给出问题代码');
+
+    // 回写索引 + 重写摘要 + 补齐任务包三节 → 应收尾就绪
+    await prun(closeRoot, ['index']);
+    const afterEntry = loadIndex(closeRoot).files.find((f) => f.path === 'src/main.mjs');
+    writeDigest(afterEntry.hash, 'CLI 入口与子命令分发（run 的返回值已改）');
+    await prun(closeRoot, ['index', '--apply', digestFile]);
+
+    const packFile = path.join(closeRoot, '.ai', 'tasks', `${closePack.id}.md`);
+    let packMd = fs.readFileSync(packFile, 'utf8');
+    packMd = packMd.replace(/（粘贴验证命令与输出摘要[^\n]*\n/, 'node --test tests/ → pass 12 / fail 0\n');
+    packMd = packMd.replace(/（完成后填写[^\n]*\n/, '改 run 的返回值；原因是回归用例要求 2\n');
+    packMd = packMd.replace(/（开工前填写[^\n]*\n/, '- 只改 src/main.mjs 的 run\n');
+    packMd = packMd.replace(/（填写：本次不碰什么）\n/, '不动 CLI 参数解析\n');
+    fs.writeFileSync(packFile, packMd, 'utf8');
+
+    close = JSON.parse((await prun(closeRoot, ['review', '--task', '--json'])).stdout);
+    assert(close.task.sections.evidenceFilled === true, '证据节判定未生效（占位符还在却被判为已填）');
+    assert(close.summary.ready === true,
+      `补齐后仍未就绪：${close.findings.map((f) => f.code).join(', ')}`);
+    // 指定任务包 id 也要能选中（--task <id>）
+    const byId = JSON.parse((await prun(closeRoot, ['review', '--task', closePack.id, '--json'])).stdout);
+    assert(byId.task.id === closePack.id, '按 id 指定任务包失败');
+    fs.rmSync(closeRoot, { recursive: true, force: true });
     pass();
 
     begin('行为：facts——能力判定随引擎版本变化，且明确边界');

@@ -18,6 +18,7 @@ import {
   scanProject, saveIndex, loadIndex, assessScale, staleFiles, digestRequest, applyDigests,
 } from './indexer.mjs';
 import { buildTaskPack, writeTaskPack } from './taskpack.mjs';
+import { closeTask, renderTaskClose } from './taskclose.mjs';
 import { reviewDrift, listDecisions } from './review.mjs';
 import { doctor, renderDoctor } from './doctor.mjs';
 import { impactOf } from './neighbors.mjs';
@@ -42,7 +43,7 @@ const USAGE = `ai-arch — AI 原生工程级架构框架 CLI（零依赖）
   ai-arch quickstart [--agent <id>]         打印可粘贴给 agent 的接入提示词
   ai-arch index [--stale|--apply <file>|--json]  构建/查看/回填文件索引
   ai-arch task "<任务描述>" [--area <目录>]  生成任务上下文包（该读什么、值多少 token）
-  ai-arch review [--drift|--decisions|--impact <文件>]  规范漂移与影响面检查
+  ai-arch review [--drift|--task [<id>]|--decisions|--impact <文件>]  规范漂移 / 任务闭环 / 决策 / 影响面
   ai-arch scale [--gaps]                    评估项目规模等级并列出欠账
   ai-arch patterns [--level S|M|L|XL] [--problem <关键词>]  设计模式选择矩阵
   ai-arch skill <list|show <id>|add <id>>   管理项目内的任务知识（skills）
@@ -81,6 +82,7 @@ const COMMAND_FLAGS = [
   'problem', 'level', 'verbose', 'prompt', 'yes', 'list', 'all', 'deep',
   'agent', 'no-index', 'format', 'framework', 'bin', 'from',
   'statement', 'category', 'enforcement', 'check', 'scope', 'rationale', 'source',
+  'task',
 ];
 
 export async function main(argv) {
@@ -473,13 +475,16 @@ function cmdRules(args, flags) {
       process.stdout.write(JSON.stringify({ issues, summary }, null, 2) + '\n');
       return issues.some((i) => i.level === 'error') ? 1 : 0;
     }
-    process.stdout.write(`规则集自检：共 ${summary.total} 条（tool ${summary.tool} / review ${summary.review} / manual ${summary.manual}）\n\n`);
+    process.stdout.write(`规则集自检：共 ${summary.total} 条（tool ${summary.tool} / review ${summary.review} / manual ${summary.manual}）`);
+    if (summary.notPropagated > 0) process.stdout.write(`；其中 ${summary.notPropagated} 条未传播`);
+    process.stdout.write('\n\n');
     if (issues.length === 0) {
       process.stdout.write('  未发现问题。\n');
     } else {
       for (const i of issues) {
         const icon = i.level === 'error' ? '✗' : i.level === 'warn' ? '!' : 'i';
-        process.stdout.write(`  ${icon} [${i.id ?? '-'}] ${i.message}\n`);
+        process.stdout.write(`  ${icon} [${i.id ?? '-'}${i.code ? ` ${i.code}` : ''}] ${i.message}\n`);
+        if (i.action) process.stdout.write(`      → ${i.action}\n`);
       }
     }
     return issues.some((i) => i.level === 'error') ? 1 : 0;
@@ -893,6 +898,19 @@ function cmdTask(root, args, flags) {
 }
 
 function cmdReview(root, args, flags) {
+  // 任务闭环：对账"任务包里的计划"与"实际改了什么"（见 cli/lib/taskclose.mjs）。
+  // 放在最前面，因为 `review --task <id>` 的位置参数是任务包 id，不能落进下面的 impact 分支。
+  if (flagBool(flags, 'task')) {
+    const id = args.length > 0 ? args[0] : null;
+    const report = closeTask(root, { id });
+    if (flagBool(flags, 'json')) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    } else {
+      process.stdout.write(renderTaskClose(report));
+    }
+    return flagBool(flags, 'strict') && !report.summary.ready ? 1 : 0;
+  }
+
   if (flagBool(flags, 'decisions')) {
     const decisions = listDecisions(root);
     if (flagBool(flags, 'json')) {

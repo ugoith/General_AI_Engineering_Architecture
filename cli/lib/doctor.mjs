@@ -55,13 +55,22 @@ export function doctor(projectRoot) {
   if (isFile(rulesFile)) {
     const { issues, summary } = auditRules(projectRoot);
     const errors = issues.filter((i) => i.level === 'error');
-    const warns = issues.filter((i) => i.level === 'warn');
+    // 传播问题单列：它的成因与"判定方式写不清"完全不同，混在一条里会让人改错地方。
+    const notPropagated = issues.filter((i) => i.code === 'rule-not-propagated');
+    const warns = issues.filter((i) => i.level === 'warn' && i.code !== 'rule-not-propagated');
     if (errors.length > 0) {
       push('error', 'rules-invalid', '.ai/rules.json', `${errors.length} 条规则有结构错误：${errors[0].message}`, 'node .ai/bin/ai-arch.mjs rules audit');
     } else if (warns.length > 0) {
       push('warn', 'rules-unverifiable', '.ai/rules.json', `${warns.length} 条规则判定方式不明确（判定不了的规则等于没有规则）`, 'node .ai/bin/ai-arch.mjs rules audit');
     } else {
       push('ok', 'rules', '.ai/rules.json', `${summary.total} 条规则（tool ${summary.tool} / review ${summary.review} / manual ${summary.manual}）`);
+    }
+    if (notPropagated.length > 0) {
+      push(
+        'warn', 'rules-not-propagated', '.ai/rules.json',
+        `${notPropagated.length} 条规则只在 rules.json 里，宪法/影响矩阵/评审清单都没引用：改动相关文件时不会被想起`,
+        'node .ai/bin/ai-arch.mjs rules audit',
+      );
     }
     if (summary.withDebt > 0) {
       push('info', 'rules-debt', '.ai/rules.json', `${summary.withDebt} 条规则有存量违规待迁移（迁移期允许，但要有清账计划）`);

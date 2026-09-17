@@ -39,6 +39,7 @@
 | `index --apply <file>` | 把 AI 产出的摘要写回索引（校验 hash） | `.ai/index/files.json` |
 | `task "<描述>"` | 生成任务上下文包 | `.ai/tasks/<日期>-<slug>.md` |
 | `review --drift` | 规范漂移检测 | stdout / 退出码（`--strict`） |
+| `review --task [<id>]` | **任务闭环**：任务包里的计划 vs 实际（前提失效 / 摘要回写 / 注册表同步 / 证据填写） | stdout / 退出码（`--strict`） |
 | `review --impact <文件>` | 影响面分析 | 受影响文件、应跑测试、需同步的文档 |
 | `review --decisions` | 列出所有 ADR | stdout |
 | `scale` | 规模等级评估 | 等级结论 + 证据链 |
@@ -68,6 +69,7 @@ ai-arch rules add "if 嵌套深度不超过 3 层" \
 | **入库** | 写入 `.ai/rules.json`，分配稳定 ID（`R-001`…）；引用时只引 ID（对应"稳定标识"原则） |
 | **传播** | CLI 输出精确的传播清单（宪法红线 / 影响矩阵 / 评审清单 / ADR / lint 配置），并**自动**写入 `.ai/index/impact-map.json`，使改动相关文件时 `review --impact` 会提醒复查 |
 | **验收** | `enforcement` 三选一：`tool`（工具自动判定，最可靠，必须给可执行命令）/ `review`（评审时人工判定）/ `manual`（只能靠人，应尽量避免）；`--check` **必填** |
+| **传播验收** | `rules audit` 会**搜索规则 ID 是否真的出现在**宪法 / 影响矩阵 / 评审清单里。只存在于 `rules.json` 的规则报 `rule-not-propagated`——"打印了传播清单"不等于"传播发生了" |
 
 **两条硬规则**（CLI 强制）：
 
@@ -287,6 +289,16 @@ node .ai/bin/ai-arch.mjs index --apply .ai/cache/digests.json
 | `risk` | `low`/`medium`/`high`（CLI 初判，AI 可修正） |
 | `digest` | 语义摘要：`purpose`/`exports`/`invariants`/`risk`/`tags`/`reviewedHash`/`stale` |
 
+`summary` 里有两组行数，**不要混用**：
+
+| 字段 | 含义 |
+|---|---|
+| `totalLoc` | **源行数**（不含 `.ai/`）——规模等级判定用这个（见 `02-scales.md`） |
+| `contextLoc` / `contextFiles` | `.ai/` 下参与判定的上下文文件（宪法、规则、事实、注册表、影响矩阵、索引说明）的行数与个数 |
+
+**哪些文件进索引**：源码与文本配置 + `.ai/` 里**参与判定**的上下文文件；框架快照（`.ai/framework`、`.ai/bin`、`.ai/lib`）、
+任务包、技能副本、ADR 不进索引（判定线见 `04-context-discipline.md` 第一节.5）。上下文文件必须进索引，否则它们改了没有任何机制能发现。
+
 **注意**：`index` 不生成语义摘要。摘要必须由 AI 阅读后产出（理由见 `04-context-discipline.md`）。
 
 ## task
@@ -310,12 +322,37 @@ node .ai/bin/ai-arch.mjs task "重构网络层" --json --out .ai/tasks/refactor-
 ## review
 
 ```bash
+node .ai/bin/ai-arch.mjs review --task               # 收尾：本次任务的计划 vs 实际（默认取最近改动的任务包）
+node .ai/bin/ai-arch.mjs review --task 2026-03-04-token-refresh   # 指定任务包
+node .ai/bin/ai-arch.mjs review --task --strict      # CI / 提交门禁：有 error/warn 则退出码 1
 node .ai/bin/ai-arch.mjs review --drift --strict     # CI：有 error/warn 则退出码 1
 node .ai/bin/ai-arch.mjs review --impact src/api/user.ts --depth 2
 node .ai/bin/ai-arch.mjs review --decisions
 ```
 
 `--drift` 只能发现机械可判定的漂移；架构层面的评审清单在 `.ai/skills/code-review/SKILL.md`。
+
+### `--task`：收尾为什么需要机械对账
+
+任务包记录了"开工时我打算读什么、每个文件当时的 hash"。收尾时**只需要重新 hash 这些文件**（不做全树扫描），就能回答四个问题：
+
+| 检查码 | 严重度 | 含义 | 为什么必须机械检出 |
+|---|---|---|---|
+| `task-premise-stale` | warn | 当时判定"hash 未变，只读摘要"的文件，现在内容变了**且摘要还是旧的** | 你据以决策的摘要已不是当前内容——这类错误最适合 AI 犯、也最难自查 |
+| `task-index-stale` | warn | 索引里的 hash 还是旧的（本次改动没回写索引） | 下个任务会读到过期条目 |
+| `task-digest-stale` | warn | 索引已刷新，但语义摘要对应的仍是旧内容 | 摘要没重写，等于用旧结论继续判断 |
+| `task-entity-stale` | warn | 本次改到的契约，注册表里的 hash 未同步 | 后续 AI 会拿旧的不变量做判断（并列出该重跑哪些测试） |
+| `task-evidence-missing` | warn | 任务包"证据"一节仍是占位符 | 完成定义要求贴**真实命令输出**，不接受"应该没问题" |
+| `task-file-missing` / `task-file-unindexed` / `task-file-unhashed` | warn / info | 任务包列的文件没了、不在索引里、或当时没有 hash | 明说"对不了账"，不伪装成"没变" |
+| `task-scope-missing` / `task-result-missing` | info | 范围 / 结果两节未填 | 任务包同时是交接文档 |
+| `task-pack-missing` / `task-pack-not-found` | error | 没有任务包，或指定 id 不存在 | 没有"计划"就无所谓"计划与实际的差异" |
+
+输出还包含三段**不用自己声称**的内容：
+
+1. **验收标准**：`变更影响面已按 impact-map.json 更新`（注册表对账）与`索引摘要已同步`（hash 对账）由 CLI 判定，
+   人读文档是否更新判定不了，标为 ⬜ 而不是假装 ✅。
+2. **应运行的测试**：来自注册表声明的 `tests` 与依赖反查。措辞是"应运行"——**本命令不能证明测试跑过**，判定不了的不做。
+3. **适用规则**：本次改动路径落在哪些规则范围内（带 `check`），逐条给结论；规则只在开工时出现一次是不够的。
 
 ## scale
 

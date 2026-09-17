@@ -25,7 +25,8 @@
 | `lib/scaffold.mjs` | `init` / `upgrade` / 工具链与 skills 复制 | 默认不覆盖已存在文件；幂等 |
 | `lib/indexer.mjs` | 文件索引：hash、行数、依赖、待写摘要请求、摘要回填 | 摘要必须带 `reviewedHash` 且与当前 `hash` 一致才接受 |
 | `lib/neighbors.mjs` | 依赖邻域与影响面计算 | 只基于静态 import；间接依赖需人工补进影响矩阵 |
-| `lib/taskpack.mjs` | 任务上下文包：打分、预算、决策（读源码/读摘要） | 超预算的文件必须列入 `dropped`，不得静默省略 |
+| `lib/taskpack.mjs` | 任务上下文包：打分、预算、决策（读源码/读摘要） | 超预算的文件必须列入 `dropped`，不得静默省略；条件必读项的占位符常量与 `taskclose.mjs` 同源 |
+| `lib/taskclose.mjs` | 任务闭环对账（`review --task`）：计划 vs 实际、前提失效、摘要/注册表同步、任务包自填检查 | **只重新 hash 任务包列过的文件**，不做全树扫描；不声称"测试跑过" |
 | `lib/review.mjs` | 漂移检测（摘要过期、文档断链、决策缺失、预算超限） | 只报机械可判定项，不猜架构问题 |
 | `lib/doctor.mjs` | 项目健康检查 | 必需文件缺失必须是 error 级 |
 | `lib/limits.mjs` | **所有阈值集中在此** | 每个数字必须能在 `docs/system/` 找到出处 |
@@ -36,7 +37,7 @@
 
 ```
 ai-arch.mjs → cli.mjs → { args, report, fsx, framework, pack, scaffold,
-                          indexer, taskpack, review, doctor, neighbors, patterns, limits }
+                          indexer, taskpack, taskclose, review, doctor, neighbors, patterns, limits }
 fsx/framework 不依赖任何业务模块；render 不依赖 fsx；pack → render + fsx + framework
 ```
 

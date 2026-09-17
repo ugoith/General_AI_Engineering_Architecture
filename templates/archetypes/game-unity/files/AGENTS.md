@@ -1,6 +1,6 @@
 # {{aiEntry}} — {{projectTitle}} 的 AI 入口
 
-> 本文件是**指针，不是百科**（≤130 行）：只放硬约束、路由表、提交前检查。知识在 `{{aiDir}}/`、`{{docsDir}}/` 与源码里，按需读取。
+> 本文件是**指针，不是百科**（≤150 行）：只放硬约束、路由表、提交前检查。知识在 `{{aiDir}}/`、`{{docsDir}}/` 与源码里，按需读取。
 > 注意：本 archetype 的 `AGENTS.md` 会**整份替换**基础层同名文件（渲染器按路径覆盖，不做拼接），因此这里保留了基础层的通用部分，并追加 Unity 专项。
 
 **这是什么项目**：{{description}}
@@ -8,7 +8,7 @@
 
 开工前必读（两份，不要跳过）：
 
-1. `{{aiDir}}/constitution.md` —— 定位、技术栈、**验证命令**、红线、规模门槛、例外记录（L1，≤130 行）。
+1. `{{aiDir}}/constitution.md` —— 定位、技术栈、**验证命令**、红线、规模门槛、例外记录（L1，≤150 行）。
 2. `{{aiDir}}/index/README.md` —— 索引体系说明书：`files.json` 的摘要字段、`impact-map.json`、任务包怎么用。
 
 ## 硬约束（不可协商）
@@ -63,18 +63,20 @@
 
 {{> SHARED:scope-guard}}
 
-## 提交前必须做
+## 任务收尾必须做（顺序不能颠倒）
 
 ```bash
 # 1) EditMode 测试（Unity 可执行文件路径见宪法"验证命令"一节）
 Unity -batchmode -nographics -projectPath . -runTests -testPlatform EditMode -testResults Logs/editmode.xml -logFile Logs/editmode.log -quit
 # 2) 出包冒烟（里程碑，或改动资产/导入设置后必须做）
 Unity -batchmode -nographics -projectPath . -executeMethod BuildScript.BuildWindows -logFile Logs/build.log -quit
-# 3) 索引与漂移
+# 3) 收尾：闭环对账 → 补摘要 → 终检
+node {{aiDir}}/bin/ai-arch.mjs review --task
 node {{aiDir}}/bin/ai-arch.mjs index --stale
 node {{aiDir}}/bin/ai-arch.mjs review --drift
 ```
 
 - 测试通过/失败数与产物路径必须写进任务包"证据"一节。**没有证据的"应该没问题"不算通过**；未跑的层级写明"未验证 + 原因 + 手动步骤"。
+- 三条收尾命令都不允许出现**新增**未处理项；`review --task` 报 `task-premise-stale` 时必须**重读那个文件**。
 
 {{> SHARED:verification-loop}}

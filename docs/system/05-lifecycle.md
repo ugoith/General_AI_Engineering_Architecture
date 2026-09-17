@@ -1,6 +1,6 @@
 # 索引与规范如何随项目演进
 
-> 对应 CLI：`ai-arch index`、`ai-arch review --drift`、`ai-arch review --impact`、`ai-arch scale`、`ai-arch upgrade`。
+> 对应 CLI：`ai-arch review --task`、`ai-arch index`、`ai-arch review --drift`、`ai-arch review --impact`、`ai-arch scale`、`ai-arch upgrade`。
 > 核心主张：**规范腐化的根因是没有触发时机**。因此本框架把"更新"挂在三个已经必然发生的动作上。
 
 ## 一、三类触发时机
@@ -8,11 +8,17 @@
 | 时机 | 触发者 | 动作 | 自动化程度 |
 |---|---|---|---|
 | **变更时** | 写代码的人/AI | 按影响矩阵同步文档与索引 | 半自动（`review --impact` 给出清单） |
+| **任务收尾时** | 完成一次任务 | 计划 vs 实际对账、回写摘要、同步注册表 | 全自动（`review --task` 对账任务包记录的 hash） |
 | **提交前** | 每次提交 | 漂移检测、上下文预算检查 | 全自动（`review --drift`） |
 | **定期** | 里程碑/季度/规模变化 | 架构评审，产出 ADR 或整改清单 | 半自动（`review --drift` + 评审清单） |
 | **契约变更时** | 改到已登记实体 | 核对不变量、更新注册表与 ADR | 半自动（`review --drift` 报 `entity-hash-stale`） |
 
-没有这三个时机，任何"有空再整理"的约定都会失效。这是设计上的取舍，理由见 `docs/04-design-notes.md` 第 5 节。
+没有这些时机，任何"有空再整理"的约定都会失效。这是设计上的取舍，理由见 `docs/04-design-notes.md` 第 5 节。
+
+**"任务收尾时"与"提交前"的区别**（两者都要，不能互相替代）：
+
+- `review --task` 对账的是**本次任务**：任务包记录了开工时每个文件的 hash，所以它能回答"当时让我只读摘要的文件是不是已经变了"——这是全项目漂移检查回答不了的问题（它只知道"现在有没有漂移"，不知道"哪个漂移是这次任务造成的、哪条前提你已经不能再用了"）。
+- `review --drift` 对账的是**整个项目与索引/规范的关系**，与任务无关。
 
 ## 二、变更时：影响矩阵
 
@@ -147,9 +153,12 @@ node .ai/bin/ai-arch.mjs upgrade --apply    # 实际写入
 本框架的自我约束：**每次任务结束时的维护动作应控制在 3 条命令、2 分钟以内**。
 
 ```bash
-node .ai/bin/ai-arch.mjs index                 # 更新 hash/行数/依赖
-node .ai/bin/ai-arch.mjs index --stale         # 看待写摘要（通常 0–3 个）
-node .ai/bin/ai-arch.mjs review --drift        # 确认无漂移
+node .ai/bin/ai-arch.mjs review --task   # 1. 闭环自查：计划 vs 实际、该补的摘要、该跑的测试、适用规则
+node .ai/bin/ai-arch.mjs index --stale   # 2. 按第 1 步给出的清单补摘要（顺带刷新 hash）
+node .ai/bin/ai-arch.mjs review --drift  # 3. 终检：确认无残留漂移
 ```
+
+顺序不能颠倒：第 1 步必须**在回写索引之前**跑，否则它看到的已经是修复后的状态，"本次任务漏了什么"就查不出来了。
+第 1 步只重新 hash 任务包列过的文件（不做全树扫描），所以这一步的成本与任务规模成正比，而不是与仓库规模成正比。
 
 如果维护动作超过这个规模，说明索引粒度设计有问题（例如把整个仓库塞进一个索引），应调整粒度而不是放弃维护。

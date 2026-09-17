@@ -20,5 +20,12 @@ node_modules/
 # 度量与自测产生的临时目录
 .ai-test-tmp/
 
-# �������� scripts/pack.mjs ���ɣ�����⣩
+# 打包产物（由 scripts/pack.mjs 生成，不入库）
 dist/
+
+# 调研与汇报产物：它们是**输入**，不是框架的一部分。
+# 框架仓库只放"方法的提炼"；调研报告（.md/.docx）与生成它们的脚本都在 .research/，
+# 该目录不纳入版本管理。需要长期留存时请归档到仓库之外。
+.research/
+*.docx
+~$*.docx

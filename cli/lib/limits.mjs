@@ -25,14 +25,18 @@ export const PACK_LIMITS = {
 /**
  * 各上下文文件的 token 上限。实测值见 scripts/measure-budget.mjs。
  *
- * - `AGENTS.md`：游戏类 archetype 实测 ~1900–2050（内联共享片段 + 引擎专项硬约束 +
- *   引擎必读项与验证命令），通用软件类 ~1600。上限 2100 留出项目自加规则的余量
- *   （例如把项目已有的规范体系接进来）。行数上限 140 与之匹配。
- * - `.ai/constitution.md`：游戏类实测 ~1600（含 decision-trigger / scale-gate 片段），上限 1800。
+ * - `AGENTS.md`：软件类 ~1670，游戏类 ~1940–2390。上限 2500 是因为 **game-unreal**
+ *   实测 2392（内联共享片段 + 10 条 UE 专项硬约束 + 11 行路由表 + 索引纪律 + 编译/测试/打包命令）。
+ *   这些内容按 `docs/04-design-notes.md` 的取舍**不该砍**（要压缩时应砍"项目定位/指针"类内容）。
+ *   原上限 2100 是在游戏类实测 1900–2050 时定的，之后模板长到 2390 却没有同步上调——
+ *   结果是**新 init 的 UE 项目一开局就报 context-budget**，阈值变成了噪音而不是约束。
+ *   行数上限 150 与之匹配（150 行 × 约 16.7 token/行 ≈ 2500）。
+ * - `.ai/constitution.md`：游戏类实测 ~1550–1650（含 decision-trigger / scale-gate 片段），上限 1800。
+ * - `.ai/index/README.md`：~880，上限 1700（它只在首次任务与格式变更时进必读清单，见 taskpack.mjs）。
  *
  * 出处：docs/system/04-context-discipline.md 的预算表。
  */
-export const AGENTS_TOKEN_BUDGET = 2100;
+export const AGENTS_TOKEN_BUDGET = 2500;
 export const CONTEXT_TOKEN_BUDGETS = {
   'AGENTS.md': AGENTS_TOKEN_BUDGET,
   '.ai/constitution.md': 1800,

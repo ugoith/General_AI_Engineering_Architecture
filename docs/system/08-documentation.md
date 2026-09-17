@@ -7,8 +7,8 @@
 
 | 类型 | 读者 | 位置 | 长度上限 | 更新触发 |
 |---|---|---|---|---|
-| 路由（指针） | AI，每会话 | `AGENTS.md` | 120 行 | 目录结构变化 |
-| 约束（红线） | AI + 人 | `.ai/constitution.md` | 120 行 | 技术栈/验证命令/边界变化 |
+| 路由（指针） | AI，每会话 | `AGENTS.md` | 150 行 | 目录结构变化 |
+| 约束（红线） | AI + 人 | `.ai/constitution.md` | 150 行 | 技术栈/验证命令/边界变化 |
 | 索引（机器可读） | AI，程序化查询 | `.ai/index/*.json`、`.ai/registry.json` | 无（结构化） | 文件内容变化 |
 | 决策 | 人 + AI | `.ai/decisions/NNNN-*.md` | 30–80 行 | 做出选择时 |
 | 结构/手册 | 人 | `docs/architecture/*`、`docs/runbooks/*` | 60–200 行 | 结构变化时 |

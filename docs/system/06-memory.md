@@ -67,7 +67,7 @@
 
 按顺序读：
 
-1. `AGENTS.md` → 骨架与路由（≤120 行）
+1. `AGENTS.md` → 骨架与路由（≤150 行）
 2. `.ai/constitution.md` → 红线与验证命令
 3. `ai-arch doctor` + `ai-arch scale --gaps` → 项目当前健康度与欠账
 4. `ai-arch review --decisions` → 历史决策（按时间倒序读最近 5 条）
